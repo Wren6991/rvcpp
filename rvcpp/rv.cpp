@@ -18,6 +18,8 @@
 // - A
 // - C (also called Zca)
 // - Zcmp
+// - Zicsr
+// - Zicntr
 // - M-mode traps
 
 // Use unsigned arithmetic everywhere, with explicit sign extension as required.
@@ -144,7 +146,6 @@ class RVCSR {
 	// Current core privilege level (M/S/U)
 	uint priv;
 
-	ux_t mcycle;
 	ux_t mstatus;
 	ux_t mie;
 	ux_t mip;
@@ -152,6 +153,12 @@ class RVCSR {
 	ux_t mscratch;
 	ux_t mepc;
 	ux_t mcause;
+
+	ux_t mcounteren;
+	ux_t mcycle;
+	ux_t mcycleh;
+	ux_t minstret;
+	ux_t minstreth;
 
 public:
 
@@ -163,7 +170,6 @@ public:
 
 	RVCSR() {
 		priv = 3;
-		mcycle = 0;
 		mstatus = 0;
 		mie = 0;
 		mip = 0;
@@ -171,9 +177,22 @@ public:
 		mscratch = 0;
 		mepc = 0;
 		mcause = 0;
+
+		mcounteren = 0;
+		mcycle = 0;
+		mcycleh = 0;
+		minstret = 0;
+		minstreth = 0;
 	}
 
-	void step() {++mcycle;}
+	void step() {
+		uint64_t mcycle_next = (uint64_t)mcycleh << 32 + mcycle + 1u;
+		mcycle = mcycle_next & 0xffffffffu;
+		mcycleh = mcycle_next >> 32;
+		uint64_t minstret_next = (uint64_t)minstreth << 32 + minstret + 1u;
+		minstret = minstret_next & 0xffffffffu;
+		minstreth = minstret_next >> 32;
+	}
 
 	// Returns None on permission/decode fail
 	std::optional<ux_t> read(uint16_t addr, bool side_effect=true) {
@@ -196,8 +215,18 @@ public:
 			case CSR_MCAUSE:     return mcause;
 			case CSR_MTVAL:      return 0;
 
+			case CSR_MCOUNTEREN: return mcounteren;
 			case CSR_MCYCLE:     return mcycle;
-			case CSR_MINSTRET:   return mcycle;
+			case CSR_MCYCLEH:    return mcycleh;
+			case CSR_MINSTRET:   return minstreth;
+			case CSR_MINSTRETH:  return minstreth;
+
+			// U-mode
+			case CSR_CYCLE:      if (priv >= PRV_M || mcounteren & 0x1) return mcycle;     else return {};
+			case CSR_CYCLEH:     if (priv >= PRV_M || mcounteren & 0x1) return mcycleh;    else return {};
+			case CSR_INSTRET:    if (priv >= PRV_M || mcounteren & 0x4) return minstreth;  else return {};
+			case CSR_INSTRETH:   if (priv >= PRV_M || mcounteren & 0x4) return minstreth;  else return {};
+
 
 			default:             return {};
 		}
@@ -205,36 +234,37 @@ public:
 
 	// Returns false on permission/decode fail
 	bool write(uint16_t addr, ux_t data, uint op=WRITE) {
-		if (addr >= 1u << 12 || GETBITS(addr, 9, 8) > priv)
+		if (addr >= 1u << 12 || GETBITS(addr, 9, 8) > priv || GETBITS(addr, 11, 10) == 0x3)
 			return false;
-		if (addr >= 1u << 12)
 		if (op == WRITE_CLEAR || op == WRITE_SET) {
 			std::optional<ux_t> rdata = read(addr, false);
 			if (!rdata)
 				return false;
 			if (op == WRITE_CLEAR)
-				data &= ~*rdata;
+				data = *rdata & ~data;
 			else
-				data |= *rdata;
+				data = *rdata |  data;
 		}
 
 		switch (addr) {
-			case CSR_MISA:                                         break;
-			case CSR_MHARTID:                                      break;
-			case CSR_MARCHID:                                      break;
-			case CSR_MIMPID:                                       break;
+			case CSR_MISA:                                                                                   break;
+			case CSR_MHARTID:                                                                                break;
+			case CSR_MARCHID:                                                                                break;
+			case CSR_MIMPID:                                                                                 break;
 
-			case CSR_MSTATUS:    mstatus  = data;                  break;
-			case CSR_MIE:        mie      = data;                  break;
-			case CSR_MIP:                                          break;
-			case CSR_MTVEC:      mtvec    = data & 0xfffffffdu;    break;
-			case CSR_MSCRATCH:   mscratch = data;                  break;
-			case CSR_MEPC:       mepc     = data & 0xfffffffeu;    break;
-			case CSR_MCAUSE:     mcause   = data & 0x800000ffu;    break;
-			case CSR_MTVAL:                                        break;
-
-			case CSR_MCYCLE:     mcycle = data;                    break;
-			case CSR_MINSTRET:   mcycle = data;                    break;
+			case CSR_MSTATUS:    mstatus    = data;                                                          break;
+			case CSR_MIE:        mie        = data;                                                          break;
+			case CSR_MIP:                                                                                    break;
+			case CSR_MTVEC:      mtvec      = data & 0xfffffffdu;                                            break;
+			case CSR_MSCRATCH:   mscratch   = data;                                                          break;
+			case CSR_MEPC:       mepc       = data & 0xfffffffeu;                                            break;
+			case CSR_MCAUSE:     mcause     = data & 0x800000ffu;                                            break;
+			case CSR_MTVAL:                                                                                  break;
+			case CSR_MCOUNTEREN: mcounteren = data & 0x7u;                                                   break;
+			case CSR_MCYCLE:     mcycle     = data;                                                          break;
+			case CSR_MCYCLEH:    mcycleh    = data;                                                          break;
+			case CSR_MINSTRET:   minstret   = data;                                                          break;
+			case CSR_MINSTRETH:  minstreth  = data;                                                          break;
 
 			default:             return false;
 		}
@@ -309,12 +339,11 @@ struct RVCore {
 		uint regnum_rd = 0;
 		std::optional<uint> exception_cause;
 
-		uint opc = instr >> 2 & 0x1f;
-		uint funct3 = instr >> 12 & 0x7;
-		uint funct7 = instr >> 25 & 0x7f;
-
 		if ((instr & 0x3) == 0x3) {
 			// 32-bit instruction
+			uint opc        = instr >> 2 & 0x1f;
+			uint funct3     = instr >> 12 & 0x7;
+			uint funct7     = instr >> 25 & 0x7f;
 			uint regnum_rs1 = instr >> 15 & 0x1f;
 			uint regnum_rs2 = instr >> 20 & 0x1f;
 			regnum_rd       = instr >> 7 & 0x1f;
@@ -602,6 +631,10 @@ struct RVCore {
 						if (!csr.write(csr_addr, wdata, write_op)) {
 							exception_cause = XCAUSE_INSTR_ILLEGAL;
 						}
+					}
+					// Suppress GPR writeback of earlier read due to write exception
+					if (exception_cause) {
+						rd_wdata = {};
 					}
 				} else if (RVOPC_MATCH(instr, MRET)) {
 					if (csr.getpriv() == PRV_M) {
