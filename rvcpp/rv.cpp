@@ -252,7 +252,14 @@ public:
 			case CSR_MARCHID:                                                                                break;
 			case CSR_MIMPID:                                                                                 break;
 
-			case CSR_MSTATUS:    mstatus    = data;                                                          break;
+			case CSR_MSTATUS: {
+				mstatus    = data;
+				if (GETBITS(mstatus, 12, 11) != 0x3 && GETBITS(mstatus, 12, 11) != 0x0) {
+					// WARL unsupported S mode back to M mode
+					mstatus |= BITRANGE(12, 11);
+				}
+				break;
+			}
 			case CSR_MIE:        mie        = data;                                                          break;
 			case CSR_MIP:                                                                                    break;
 			case CSR_MTVEC:      mtvec      = data & 0xfffffffdu;                                            break;
