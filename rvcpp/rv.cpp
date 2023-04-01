@@ -523,7 +523,6 @@ struct RVCore {
 						rd_wdata = mem.r32(rs1);
 						mem.w32(rs1, rs2);
 					}
-
 				} else if (
 						RVOPC_MATCH(instr, AMOSWAP_W) ||
 						RVOPC_MATCH(instr, AMOADD_W) ||
@@ -557,6 +556,17 @@ struct RVCore {
 				break;
 			}
 
+			case OPC_MISC_MEM: {
+				if (RVOPC_MATCH(instr, FENCE)) {
+					// implement as nop
+				} else if (RVOPC_MATCH(instr, FENCE_I)) {
+					// implement as nop
+				} else {
+					exception_cause = XCAUSE_INSTR_ILLEGAL;
+				}
+				break;
+			}
+
 			case OPC_JAL:
 				rd_wdata = pc + 4;
 				pc_wdata = pc + imm_j(instr);
@@ -576,29 +586,23 @@ struct RVCore {
 				break;
 
 			case OPC_SYSTEM: {
-				uint16_t csr_addr = instr >> 20;
-				if (funct3 >= 0b001 && funct3 <= 0b011) {
-					// csrrw, csrrs, csrrc
-					uint write_op = funct3 - 0b001;
+				if (RVOPC_MATCH(instr, CSRRW) || RVOPC_MATCH(instr, CSRRS) || RVOPC_MATCH(instr, CSRRC) ||
+						RVOPC_MATCH(instr, CSRRWI) || RVOPC_MATCH(instr, CSRRSI) || RVOPC_MATCH(instr, CSRRCI)) {
+					uint16_t csr_addr = instr >> 20;
+					uint write_op = (funct3 - 1) & 0x3;
+					ux_t wdata = funct3 & 0x4 ? regnum_rs1 : rs1;
+
 					if (write_op != RVCSR::WRITE || regnum_rd != 0) {
 						rd_wdata = csr.read(csr_addr);
 						if (!rd_wdata) {
 							exception_cause = XCAUSE_INSTR_ILLEGAL;
 						}
 					}
-					else if (write_op == RVCSR::WRITE || regnum_rs1 != 0) {
-						if (!csr.write(csr_addr, rs1, write_op)) {
+					if (write_op == RVCSR::WRITE || regnum_rs1 != 0) {
+						if (!csr.write(csr_addr, wdata, write_op)) {
 							exception_cause = XCAUSE_INSTR_ILLEGAL;
 						}
 					}
-				}
-				else if (funct3 >= 0b101 && funct3 <= 0b111) {
-					// csrrwi, csrrsi, csrrci
-					uint write_op = funct3 - 0b101;
-					if (write_op != RVCSR::WRITE || regnum_rd != 0)
-						rd_wdata = csr.read(csr_addr);
-					if (write_op == RVCSR::WRITE || regnum_rs1 != 0)
-						csr.write(csr_addr, regnum_rs1, write_op);
 				} else if (RVOPC_MATCH(instr, MRET)) {
 					if (csr.getpriv() == PRV_M) {
 						pc_wdata = csr.trap_mret();
@@ -609,6 +613,8 @@ struct RVCore {
 					exception_cause = XCAUSE_ECALL_U + csr.getpriv();
 				} else if (RVOPC_MATCH(instr, EBREAK)) {
 					exception_cause = XCAUSE_EBREAK;
+				} else if (RVOPC_MATCH(instr, WFI)) {
+					// implement as nop
 				} else {
 					exception_cause = XCAUSE_INSTR_ILLEGAL;
 				}
@@ -807,7 +813,7 @@ struct RVCore {
 		if (exception_cause) {
 			pc_wdata = csr.trap_enter(*exception_cause, pc);
 			if (trace) {
-				printf("Trap cause %2u: pc <- %08x\n", *exception_cause, *pc_wdata);
+				printf("^^^ Trap           : xcause <- %2u    : pc <- %08x\n", *exception_cause, *pc_wdata);
 			}
 		}
 
@@ -824,7 +830,7 @@ struct RVCore {
 
 
 const char *help_str =
-"Usage: tb [--bin x.bin] [--dump start end] [--vcd x.vcd] [--cycles n]\n"
+"Usage: tb [--bin x.bin] [--dump start end] [--vcd x.vcd] [--cycles n] [--cpuret]\n"
 "    --bin x.bin      : Flat binary file loaded to address 0x0 in RAM\n"
 "    --vcd x.vcd      : Dummy option for compatibility with CXXRTL tb\n"
 "    --dump start end : Print out memory contents between start and end (exclusive)\n"
@@ -832,7 +838,8 @@ const char *help_str =
 "    --cycles n       : Maximum number of cycles to run before exiting.\n"
 "    --memsize n      : Memory size in units of 1024 bytes, default is 16 MB\n"
 "    --trace          : Print out execution tracing info\n"
-;
+"    --cpuret         : Testbench's return code is the return code written to\n"
+"                       IO_EXIT by the CPU, or -1 if timed out.\n";
 
 void exit_help(std::string errtext = "") {
 	std::cerr << errtext << help_str;
@@ -849,6 +856,7 @@ int main(int argc, char **argv) {
 	bool load_bin = false;
 	std::string bin_path;
 	bool trace_execution = false;
+	bool propagate_return_code = false;
 
 	for (int i = 1; i < argc; ++i) {
 		std::string s(argv[i]);
@@ -889,6 +897,9 @@ int main(int argc, char **argv) {
 		else if (s == "--trace") {
 			trace_execution = true;
 		}
+		else if (s == "--cpuret") {
+			propagate_return_code = true;
+		}
 		else {
 			std::cerr << "Unrecognised argument " << s << "\n";
 			exit_help("");
@@ -915,13 +926,21 @@ int main(int argc, char **argv) {
 	RVCore core;
 
 	int64_t cyc;
+	int rc = 0;
 	try {
 		for (cyc = 0; cyc < max_cycles; ++cyc)
 			core.step(mem, trace_execution);
+		if (cyc == max_cycles) {
+			printf("Timed out.\n");
+			if (propagate_return_code)
+				rc = -1;
+		}
 	}
 	catch (TBExitException e) {
 		printf("CPU requested halt. Exit code %d\n", e.exitcode);
 		printf("Ran for %ld cycles\n", cyc + 1);
+		if (propagate_return_code)
+			rc = e.exitcode;
 	}
 
 	for (auto [start, end] : dump_ranges) {
@@ -931,5 +950,5 @@ int main(int argc, char **argv) {
 		printf("\n");
 	}
 
-	return 0;
+	return rc;
 }
