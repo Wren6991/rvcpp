@@ -146,19 +146,50 @@ class RVCSR {
 	// Current core privilege level (M/S/U)
 	uint priv;
 
-	ux_t mstatus;
+	// Machine trap handling
+	ux_t xstatus;
 	ux_t mie;
 	ux_t mip;
 	ux_t mtvec;
 	ux_t mscratch;
 	ux_t mepc;
 	ux_t mcause;
+	ux_t medeleg;
+	ux_t mideleg;
 
+	// Machine counter
 	ux_t mcounteren;
 	ux_t mcycle;
 	ux_t mcycleh;
 	ux_t minstret;
 	ux_t minstreth;
+
+	// Supervisor trap handling
+	// (Note mstatus/sstatus are views of xstatus)
+	ux_t sie;
+	ux_t sip;
+	ux_t stvec;
+	ux_t scounteren;
+	ux_t sscratch;
+	ux_t sepc;
+	ux_t scause;
+	ux_t satp;
+
+	const ux_t SSTATUS_MASK = 
+		SSTATUS_SIE |
+		SSTATUS_SPIE |
+		SSTATUS_SPP |
+		SSTATUS_SUM |
+		SSTATUS_MXR;
+
+	const ux_t MSTATUS_MASK =
+		SSTATUS_MASK |
+		MSTATUS_MIE |
+		MSTATUS_MPIE |
+		MSTATUS_MPP |
+		MSTATUS_TVM |
+		MSTATUS_TW |
+		MSTATUS_TSR;
 
 public:
 
@@ -169,20 +200,32 @@ public:
 	};
 
 	RVCSR() {
-		priv = 3;
-		mstatus = 0;
-		mie = 0;
-		mip = 0;
-		mtvec = 0;
-		mscratch = 0;
-		mepc = 0;
-		mcause = 0;
+		priv       = 3;
+
+		xstatus    = 0;
+		mie        = 0;
+		mip        = 0;
+		mtvec      = 0;
+		mscratch   = 0;
+		mepc       = 0;
+		mcause     = 0;
+		medeleg    = 0;
+		mideleg    = 0;
 
 		mcounteren = 0;
-		mcycle = 0;
-		mcycleh = 0;
-		minstret = 0;
-		minstreth = 0;
+		mcycle     = 0;
+		mcycleh    = 0;
+		minstret   = 0;
+		minstreth  = 0;
+
+		sie        = 0;
+		sip        = 0;
+		stvec      = 0;
+		scounteren = 0;
+		sscratch   = 0;
+		sepc       = 0;
+		scause     = 0;
+		satp       = 0;
 	}
 
 	void step() {
@@ -196,17 +239,28 @@ public:
 
 	// Returns None on permission/decode fail
 	std::optional<ux_t> read(uint16_t addr, bool side_effect=true) {
+		// Minimum privilege check
 		if (addr >= 1u << 12 || GETBITS(addr, 9, 8) > priv)
 			return {};
+		// Additional privilege checks
+		bool permit_cycle =
+			(priv >= PRV_M || mcounteren & 0x1) &&
+			(priv >= PRV_S || scounteren & 0x1); 
+		bool permit_instret =
+			(priv >= PRV_M || mcounteren & 0x4) &&
+			(priv >= PRV_S || scounteren & 0x4); 
+		bool permit_satp = priv >= PRV_M || !(xstatus & MSTATUS_TVM);
 
 		switch (addr) {
+			// Machine ID
 			case CSR_MISA:       return 0x40101105; // RV32IMAC + U
 			case CSR_MHARTID:    return 0;
 			case CSR_MARCHID:    return 0;
 			case CSR_MIMPID:     return 0;
 			case CSR_MVENDORID:  return 0;
 
-			case CSR_MSTATUS:    return mstatus;
+			// Machine trap handling
+			case CSR_MSTATUS:    return xstatus & MSTATUS_MASK;
 			case CSR_MIE:        return mie;
 			case CSR_MIP:        return mip;
 			case CSR_MTVEC:      return mtvec;
@@ -214,19 +268,33 @@ public:
 			case CSR_MEPC:       return mepc;
 			case CSR_MCAUSE:     return mcause;
 			case CSR_MTVAL:      return 0;
+			case CSR_MEDELEG:    return medeleg;
+			case CSR_MIDELEG:    return mideleg;
 
+			// Machine counter
 			case CSR_MCOUNTEREN: return mcounteren;
 			case CSR_MCYCLE:     return mcycle;
 			case CSR_MCYCLEH:    return mcycleh;
 			case CSR_MINSTRET:   return minstreth;
 			case CSR_MINSTRETH:  return minstreth;
 
-			// U-mode
-			case CSR_CYCLE:      if (priv >= PRV_M || mcounteren & 0x1) return mcycle;     else return {};
-			case CSR_CYCLEH:     if (priv >= PRV_M || mcounteren & 0x1) return mcycleh;    else return {};
-			case CSR_INSTRET:    if (priv >= PRV_M || mcounteren & 0x4) return minstreth;  else return {};
-			case CSR_INSTRETH:   if (priv >= PRV_M || mcounteren & 0x4) return minstreth;  else return {};
+			// Supervisor trap handling
+			case CSR_SSTATUS:    return xstatus & SSTATUS_MASK;
+			case CSR_SIE:        return sie;
+			case CSR_SIP:        return sip;
+			case CSR_STVEC:      return stvec;
+			case CSR_SCOUNTEREN: return scounteren;
+			case CSR_SSCRATCH:   return sscratch;
+			case CSR_SEPC:       return sepc;
+			case CSR_SCAUSE:     return scause;
+			case CSR_STVAL:      return 0;
+			case CSR_SATP:       if (permit_satp)        return satp;       else return {};
 
+			// Unprivileged
+			case CSR_CYCLE:      if (permit_cycle)       return mcycle;     else return {};
+			case CSR_CYCLEH:     if (permit_cycle)       return mcycleh;    else return {};
+			case CSR_INSTRET:    if (permit_instret)     return minstreth;  else return {};
+			case CSR_INSTRETH:   if (permit_instret)     return minstreth;  else return {};
 
 			default:             return {};
 		}
@@ -234,8 +302,11 @@ public:
 
 	// Returns false on permission/decode fail
 	bool write(uint16_t addr, ux_t data, uint op=WRITE) {
+		// Check minimum privilege + !RO
 		if (addr >= 1u << 12 || GETBITS(addr, 9, 8) > priv || GETBITS(addr, 11, 10) == 0x3)
 			return false;
+
+		// Apply read-modify-write behaviour
 		if (op == WRITE_CLEAR || op == WRITE_SET) {
 			std::optional<ux_t> rdata = read(addr, false);
 			if (!rdata)
@@ -246,32 +317,42 @@ public:
 				data = *rdata |  data;
 		}
 
-		switch (addr) {
-			case CSR_MISA:                                                                                   break;
-			case CSR_MHARTID:                                                                                break;
-			case CSR_MARCHID:                                                                                break;
-			case CSR_MIMPID:                                                                                 break;
+		bool permit_satp = priv >= PRV_M || !(xstatus & MSTATUS_TVM);
 
-			case CSR_MSTATUS: {
-				mstatus    = data;
-				if (GETBITS(mstatus, 12, 11) != 0x3 && GETBITS(mstatus, 12, 11) != 0x0) {
-					// WARL unsupported S mode back to M mode
-					mstatus |= BITRANGE(12, 11);
-				}
-				break;
-			}
-			case CSR_MIE:        mie        = data;                                                          break;
-			case CSR_MIP:                                                                                    break;
-			case CSR_MTVEC:      mtvec      = data & 0xfffffffdu;                                            break;
-			case CSR_MSCRATCH:   mscratch   = data;                                                          break;
-			case CSR_MEPC:       mepc       = data & 0xfffffffeu;                                            break;
-			case CSR_MCAUSE:     mcause     = data & 0x800000ffu;                                            break;
-			case CSR_MTVAL:                                                                                  break;
-			case CSR_MCOUNTEREN: mcounteren = data & 0x7u;                                                   break;
-			case CSR_MCYCLE:     mcycle     = data;                                                          break;
-			case CSR_MCYCLEH:    mcycleh    = data;                                                          break;
-			case CSR_MINSTRET:   minstret   = data;                                                          break;
-			case CSR_MINSTRETH:  minstreth  = data;                                                          break;
+		switch (addr) {
+			case CSR_MISA:                                                                       break;
+			case CSR_MHARTID:                                                                    break;
+			case CSR_MARCHID:                                                                    break;
+			case CSR_MIMPID:                                                                     break;
+			case CSR_MVENDORID:                                                                  break;
+
+			case CSR_MSTATUS:    xstatus    = data & MSTATUS_MASK | xstatus & ~MSTATUS_MASK;     break;
+			case CSR_MIE:        mie        = data;                                              break;
+			case CSR_MIP:                                                                        break;
+			case CSR_MTVEC:      mtvec      = data & 0xfffffffdu;                                break;
+			case CSR_MSCRATCH:   mscratch   = data;                                              break;
+			case CSR_MEPC:       mepc       = data & 0xfffffffeu;                                break;
+			case CSR_MCAUSE:     mcause     = data & 0x800000ffu;                                break;
+			case CSR_MTVAL:                                                                      break;
+			case CSR_MEDELEG:    medeleg    = data;                                              break;
+			case CSR_MIDELEG:    mideleg    = data;                                              break;
+
+			case CSR_MCOUNTEREN: mcounteren = data & 0x7u;                                       break;
+			case CSR_MCYCLE:     mcycle     = data;                                              break;
+			case CSR_MCYCLEH:    mcycleh    = data;                                              break;
+			case CSR_MINSTRET:   minstret   = data;                                              break;
+			case CSR_MINSTRETH:  minstreth  = data;                                              break;
+
+			case CSR_SSTATUS:    xstatus    = data & SSTATUS_MASK | xstatus & ~SSTATUS_MASK;     break;
+			case CSR_SIE:        sie        = data;                                              break;
+			case CSR_SIP:                                                                        break;
+			case CSR_STVEC:      stvec      = data & 0xfffffffdu;                                break;
+			case CSR_SCOUNTEREN: scounteren = data & 0x7u;                                       break;
+			case CSR_SSCRATCH:   sscratch   = data;                                              break;
+			case CSR_SEPC:       sepc       = data & 0xfffffffeu;                                break;
+			case CSR_SCAUSE:     scause     = data & 0x800000ffu;                                break;
+			case CSR_STVAL:                                                                      break;
+			case CSR_SATP:       if (permit_satp) satp = 0; else return false;                   break;
 
 			default:             return false;
 		}
@@ -280,35 +361,80 @@ public:
 
 	// Update trap state (including change of privilege level), return trap target PC
 	ux_t trap_enter(uint xcause, ux_t xepc) {
-		mstatus = (mstatus & ~MSTATUS_MPP) | (priv << 11);
-		priv = PRV_M;
+		assert(xcause < 32);
 
-		if (mstatus & MSTATUS_MIE)
-			mstatus |= MSTATUS_MPIE;
-		mstatus &= ~MSTATUS_MIE;
+		uint target_priv = medeleg & (1u << xcause) ? PRV_S : PRV_M;
+		if (target_priv < priv) {
+			target_priv = priv;
+		}
 
-		mcause = xcause;
-		mepc = xepc;
-		if ((mtvec & 0x1) && (xcause & (1u << 31))) {
-			return (mtvec & -2) + 4 * (xcause & ~(1u << 31));
+		if (target_priv == PRV_M) {
+			// Trap to M-mode
+			xstatus = (xstatus & ~MSTATUS_MPP) | (priv << 11);
+			priv = PRV_M;
+
+			if (xstatus & MSTATUS_MIE)
+				xstatus |= MSTATUS_MPIE;
+			xstatus &= ~MSTATUS_MIE;
+
+			mcause = xcause;
+			mepc = xepc;
+			if ((mtvec & 0x1) && (xcause & (1u << 31))) {
+				return (mtvec & -2) + 4 * (xcause & ~(1u << 31));
+			} else {
+				return mtvec & -2;
+			}
 		} else {
-			return mtvec & -2;
+			// Trap to S-mode
+			assert(target_priv == PRV_S);
+			xstatus = (xstatus & ~SSTATUS_SPP) | (priv << 8);
+			priv = PRV_S;
+
+			if (xstatus & SSTATUS_SIE)
+				xstatus |= SSTATUS_SPIE;
+			xstatus &= ~SSTATUS_SIE;
+
+			scause = xcause;
+			sepc = xepc;
+
+			if ((stvec & 0x1) && (xcause & (1u << 31))) {
+				return (stvec & -2) + 4 * (xcause & ~(1u << 31));
+			} else {
+				return stvec & -2;
+			}
 		}
 	}
 
 	// Update trap state, return mepc:
 	ux_t trap_mret() {
-		priv = GETBITS(mstatus, 12, 11);
+		priv = GETBITS(xstatus, 12, 11);
 
-		if (mstatus & MSTATUS_MPIE)
-			mstatus |= MSTATUS_MIE;
-		mstatus &= ~MSTATUS_MPIE;
+		if (xstatus & MSTATUS_MPIE)
+			xstatus |= MSTATUS_MIE;
+		xstatus &= ~MSTATUS_MPIE;
 
 		return mepc;
 	}
 
+	ux_t trap_sret(ux_t pc) {
+		if (xstatus & MSTATUS_TSR) {
+			return trap_enter(XCAUSE_INSTR_ILLEGAL, pc);
+		} else {
+			priv = GETBIT(xstatus, 8);
+			if (xstatus & SSTATUS_SPIE)
+				xstatus |= SSTATUS_SIE;
+			xstatus &= ~SSTATUS_SPIE;
+			
+			return sepc;
+		}
+	}
+
 	uint getpriv() {
 		return priv;
+	}
+
+	uint getxstatus() {
+		return xstatus;
 	}
 };
 
@@ -345,6 +471,8 @@ struct RVCore {
 		std::optional<ux_t> pc_wdata;
 		uint regnum_rd = 0;
 		std::optional<uint> exception_cause;
+		std::optional<ux_t> trace_csr_addr;
+		std::optional<ux_t> trace_csr_result;
 
 		if ((instr & 0x3) == 0x3) {
 			// 32-bit instruction
@@ -638,6 +766,10 @@ struct RVCore {
 						if (!csr.write(csr_addr, wdata, write_op)) {
 							exception_cause = XCAUSE_INSTR_ILLEGAL;
 						}
+						if (trace && !exception_cause) {
+							trace_csr_addr = csr_addr;
+							trace_csr_result = csr.read(csr_addr, false);
+						}
 					}
 					// Suppress GPR writeback of earlier read due to write exception
 					if (exception_cause) {
@@ -649,6 +781,17 @@ struct RVCore {
 					} else {
 						exception_cause = XCAUSE_INSTR_ILLEGAL;
 					}
+				} else if (RVOPC_MATCH(instr, SRET)) {
+					if (csr.getpriv() >= PRV_S) {
+						pc_wdata = csr.trap_sret(pc);
+					} else {
+						exception_cause = XCAUSE_INSTR_ILLEGAL;
+					}
+				} else if (RVOPC_MATCH(instr, SFENCE_VMA)) {
+					if (csr.getxstatus() & MSTATUS_TVM) {
+						exception_cause = XCAUSE_INSTR_ILLEGAL;
+					}
+					// Otherwise nop.
 				} else if (RVOPC_MATCH(instr, ECALL)) {
 					exception_cause = XCAUSE_ECALL_U + csr.getpriv();
 				} else if (RVOPC_MATCH(instr, EBREAK)) {
@@ -839,21 +982,24 @@ struct RVCore {
 				printf("    %04x : ", instr & 0xffffu);
 			}
 			if (regnum_rd != 0 && rd_wdata) {
-				printf("%-3s <- %08x ", friendly_reg_names[regnum_rd], *rd_wdata);
+				printf("%-3s  <- %08x ", friendly_reg_names[regnum_rd], *rd_wdata);
 			} else {
-				printf("                ");
+				printf("                 ");
 			}
 			if (pc_wdata) {
 				printf(": pc <- %08x\n", *pc_wdata);
 			} else {
 				printf(":\n");
 			}
+			if (*trace_csr_result) {
+				printf("                   : #%03x <- %08x :\n", *trace_csr_addr, *trace_csr_result);
+			}
 		}
 
 		if (exception_cause) {
 			pc_wdata = csr.trap_enter(*exception_cause, pc);
 			if (trace) {
-				printf("^^^ Trap           : xcause <- %2u    : pc <- %08x\n", *exception_cause, *pc_wdata);
+				printf("^^^ Trap           : xcause <- %2u     : pc <- %08x\n", *exception_cause, *pc_wdata);
 			}
 		}
 
