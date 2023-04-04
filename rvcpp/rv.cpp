@@ -7,10 +7,10 @@
 #include <tuple>
 #include <vector>
 
-#include "rv_opcodes.h"
+#include "encoding/rv_opcodes.h"
+#include "encoding/rv_csr.h"
 #include "rv_types.h"
-#include "rv_csr.h"
-#include "mem.h"
+#include "rv_mem.h"
 
 // Minimal RISC-V interpreter, supporting:
 // - RV32I

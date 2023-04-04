@@ -1,5 +1,5 @@
-#ifndef _MEM_H
-#define _MEM_H
+#ifndef _RV_MEM_H
+#define _RV_MEM_H
 
 #include "rv_types.h"
 #include <optional>

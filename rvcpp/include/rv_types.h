@@ -1,5 +1,5 @@
-#ifndef _RV_TYPES
-#define _RV_TYPES
+#ifndef _RV_TYPES_H
+#define _RV_TYPES_H
 
 enum {XLEN = 32};
 typedef uint32_t ux_t;
