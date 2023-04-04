@@ -5,7 +5,7 @@ EXECUTABLE:=rvcpp
 .PHONY: all clean
 
 all:
-	g++ -std=c++17 -O3 -Wall -Wno-parentheses $(SRCS) -o $(EXECUTABLE)
+	g++ -std=c++17 -O3 -Wall -Wextra $(SRCS) -o $(EXECUTABLE)
 
 clean:
 	rm -f $(EXECUTABLE)

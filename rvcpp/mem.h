@@ -5,12 +5,12 @@
 #include <optional>
 
 struct MemBase32 {
-	virtual std::optional<uint8_t> r8(ux_t addr) {return {};}
-	virtual bool w8(ux_t addr, uint8_t data) {return false;}
-	virtual std::optional<uint16_t> r16(ux_t addr) {return {};}
-	virtual bool w16(ux_t addr, uint16_t data) {return false;}
-	virtual std::optional<uint32_t> r32(ux_t addr) {return {};}
-	virtual bool w32(ux_t addr, uint32_t data) {return false;}
+	virtual std::optional<uint8_t> r8(__attribute__((unused)) ux_t addr) {return {};}
+	virtual bool w8(__attribute__((unused)) ux_t addr, __attribute__((unused)) uint8_t data) {return false;}
+	virtual std::optional<uint16_t> r16(__attribute__((unused)) ux_t addr) {return {};}
+	virtual bool w16(__attribute__((unused)) ux_t addr, __attribute__((unused)) uint16_t data) {return false;}
+	virtual std::optional<uint32_t> r32(__attribute__((unused)) ux_t addr) {return {};}
+	virtual bool w32(__attribute__((unused)) ux_t addr, __attribute__((unused)) uint32_t data) {return false;}
 };
 
 struct FlatMem32: MemBase32 {

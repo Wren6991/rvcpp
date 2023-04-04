@@ -27,7 +27,7 @@ static inline ux_t sext(ux_t bits, int sign_bit) {
 	if (sign_bit >= XLEN - 1)
 		return bits;
 	else
-		return (bits & (1u << sign_bit + 1) - 1) - ((bits & 1u << sign_bit) << 1);
+		return (bits & ((1u << (sign_bit + 1)) - 1)) - ((bits & 1u << sign_bit) << 1);
 }
 
 // Inclusive msb:lsb style, like Verilog (and like the ISA manual)
@@ -190,16 +190,16 @@ public:
 	}
 
 	void step() {
-		uint64_t mcycle_next = (uint64_t)mcycleh << 32 + mcycle + 1u;
+		uint64_t mcycle_next = ((uint64_t)mcycleh << 32) + mcycle + 1u;
 		mcycle = mcycle_next & 0xffffffffu;
 		mcycleh = mcycle_next >> 32;
-		uint64_t minstret_next = (uint64_t)minstreth << 32 + minstret + 1u;
+		uint64_t minstret_next = ((uint64_t)minstreth << 32) + minstret + 1u;
 		minstret = minstret_next & 0xffffffffu;
 		minstreth = minstret_next >> 32;
 	}
 
 	// Returns None on permission/decode fail
-	std::optional<ux_t> read(uint16_t addr, bool side_effect=true) {
+	std::optional<ux_t> read(uint16_t addr, __attribute__((unused)) bool side_effect=true) {
 		// Minimum privilege check
 		if (addr >= 1u << 12 || GETBITS(addr, 9, 8) > priv)
 			return {};
@@ -287,7 +287,7 @@ public:
 			case CSR_MIMPID:                                                                     break;
 			case CSR_MVENDORID:                                                                  break;
 
-			case CSR_MSTATUS:    xstatus    = data & MSTATUS_MASK | xstatus & ~MSTATUS_MASK;     break;
+			case CSR_MSTATUS:    xstatus    = (data & MSTATUS_MASK) | (xstatus & ~MSTATUS_MASK); break;
 			case CSR_MIE:        mie        = data;                                              break;
 			case CSR_MIP:                                                                        break;
 			case CSR_MTVEC:      mtvec      = data & 0xfffffffdu;                                break;
@@ -304,7 +304,7 @@ public:
 			case CSR_MINSTRET:   minstret   = data;                                              break;
 			case CSR_MINSTRETH:  minstreth  = data;                                              break;
 
-			case CSR_SSTATUS:    xstatus    = data & SSTATUS_MASK | xstatus & ~SSTATUS_MASK;     break;
+			case CSR_SSTATUS:    xstatus    = (data & SSTATUS_MASK) | (xstatus & ~SSTATUS_MASK); break;
 			case CSR_SIE:        sie        = data;                                              break;
 			case CSR_SIP:                                                                        break;
 			case CSR_STVEC:      stvec      = data & 0xfffffffdu;                                break;
@@ -574,9 +574,9 @@ struct RVCore {
 						sdx_t mul_op_a = rs1;
 						sdx_t mul_op_b = rs2;
 						if (funct3 != 0b011)
-							mul_op_a -= (mul_op_a & (1 << XLEN - 1)) << 1;
+							mul_op_a -= (mul_op_a & (1 << (XLEN - 1))) << 1;
 						if (funct3 < 0b010)
-							mul_op_b -= (mul_op_b & (1 << XLEN - 1)) << 1;
+							mul_op_b -= (mul_op_b & (1 << (XLEN - 1))) << 1;
 						sdx_t mul_result = mul_op_a * mul_op_b;
 						if (funct3 == 0b000)
 							rd_wdata = mul_result;
