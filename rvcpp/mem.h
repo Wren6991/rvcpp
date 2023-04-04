@@ -58,7 +58,7 @@ struct FlatMem32: MemBase32 {
 	virtual std::optional<uint32_t> r32(ux_t addr) {
 		assert(addr < size && addr + 3 < size);
 		assert(addr % 4 == 0);
-		// printf("mem r %08x -> %08x\n", addr, mem[addr >> 2]);
+		// printf("  mem r %08x -> %08x\n", addr, mem[addr >> 2]);
 		return mem[addr >> 2];
 	}
 
@@ -66,7 +66,7 @@ struct FlatMem32: MemBase32 {
 		assert(addr < size && addr + 3 < size);
 		assert(addr % 4 == 0);
 		mem[addr >> 2] = data;
-		// printf("mem w %08x <- %08x\n", addr, mem[addr >> 2]);
+		// printf("  mem w %08x <- %08x\n", addr, mem[addr >> 2]);
 		return true;
 	}
 };

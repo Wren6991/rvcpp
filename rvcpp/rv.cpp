@@ -112,6 +112,7 @@ class RVCSR {
 	ux_t mie;
 	ux_t mip;
 	ux_t mtvec;
+	ux_t mtval;
 	ux_t mscratch;
 	ux_t mepc;
 	ux_t mcause;
@@ -130,13 +131,14 @@ class RVCSR {
 	ux_t sie;
 	ux_t sip;
 	ux_t stvec;
+	ux_t stval;
 	ux_t scounteren;
 	ux_t sscratch;
 	ux_t sepc;
 	ux_t scause;
 	ux_t satp;
 
-	const ux_t SSTATUS_MASK = 
+	const ux_t SSTATUS_MASK =
 		SSTATUS_SIE |
 		SSTATUS_SPIE |
 		SSTATUS_SPP |
@@ -167,6 +169,7 @@ public:
 		mie        = 0;
 		mip        = 0;
 		mtvec      = 0;
+		mtval      = 0;
 		mscratch   = 0;
 		mepc       = 0;
 		mcause     = 0;
@@ -182,6 +185,7 @@ public:
 		sie        = 0;
 		sip        = 0;
 		stvec      = 0;
+		stval      = 0;
 		scounteren = 0;
 		sscratch   = 0;
 		sepc       = 0;
@@ -206,10 +210,10 @@ public:
 		// Additional privilege checks
 		bool permit_cycle =
 			(priv >= PRV_M || mcounteren & 0x1) &&
-			(priv >= PRV_S || scounteren & 0x1); 
+			(priv >= PRV_S || scounteren & 0x1);
 		bool permit_instret =
 			(priv >= PRV_M || mcounteren & 0x4) &&
-			(priv >= PRV_S || scounteren & 0x4); 
+			(priv >= PRV_S || scounteren & 0x4);
 		bool permit_satp = priv >= PRV_M || !(xstatus & MSTATUS_TVM);
 
 		switch (addr) {
@@ -228,7 +232,7 @@ public:
 			case CSR_MSCRATCH:   return mscratch;
 			case CSR_MEPC:       return mepc;
 			case CSR_MCAUSE:     return mcause;
-			case CSR_MTVAL:      return 0;
+			case CSR_MTVAL:      return mtval;
 			case CSR_MEDELEG:    return medeleg;
 			case CSR_MIDELEG:    return mideleg;
 
@@ -248,7 +252,7 @@ public:
 			case CSR_SSCRATCH:   return sscratch;
 			case CSR_SEPC:       return sepc;
 			case CSR_SCAUSE:     return scause;
-			case CSR_STVAL:      return 0;
+			case CSR_STVAL:      return stval;
 			case CSR_SATP:       if (permit_satp)        return satp;       else return {};
 
 			// Unprivileged
@@ -294,7 +298,7 @@ public:
 			case CSR_MSCRATCH:   mscratch   = data;                                              break;
 			case CSR_MEPC:       mepc       = data & 0xfffffffeu;                                break;
 			case CSR_MCAUSE:     mcause     = data & 0x800000ffu;                                break;
-			case CSR_MTVAL:                                                                      break;
+			case CSR_MTVAL:      mtval      = data;                                              break;
 			case CSR_MEDELEG:    medeleg    = data;                                              break;
 			case CSR_MIDELEG:    mideleg    = data;                                              break;
 
@@ -312,7 +316,7 @@ public:
 			case CSR_SSCRATCH:   sscratch   = data;                                              break;
 			case CSR_SEPC:       sepc       = data & 0xfffffffeu;                                break;
 			case CSR_SCAUSE:     scause     = data & 0x800000ffu;                                break;
-			case CSR_STVAL:                                                                      break;
+			case CSR_STVAL:      stval      = data;                                              break;
 			case CSR_SATP:       if (permit_satp) satp = data & ~SATP32_ASID; else return false; break;
 
 			default:             return false;
@@ -394,31 +398,70 @@ public:
 		}
 	}
 
+	void trap_set_xtval(ux_t xtval) {
+		assert(priv >= PRV_S);
+		if (priv == PRV_S) {
+			stval = xtval;
+		} else {
+			mtval = xtval;
+		}
+	}
+
+	// True privilege is also the effective privilege for instruction fetch
+	// (fetch translation/protection is not affected by MPRV)
 	uint get_true_priv() {
 		return priv;
 	}
 
-	uint get_effective_priv() {
+	uint get_effective_priv_ls() {
 		if (xstatus & MSTATUS_MPRV) {
 			assert(priv == PRV_M);
 			return GETBITS(xstatus, 12, 11); // MPP
-		} else if (priv == PRV_S && (xstatus & SSTATUS_SUM)) {
-			return PRV_U;
 		} else {
 			return priv;
 		}
+	}
+
+	bool translation_enabled_fetch() {
+		return get_true_priv() != PRV_M && (satp & SATP32_MODE);
+	}
+
+	bool translation_enabled_ls() {
+		return get_effective_priv_ls() != PRV_M && (satp & SATP32_MODE);
+	}
+
+	ux_t get_atp() {
+		return (satp & SATP32_PPN) << 12;
 	}
 
 	bool permit_sfence_vma() {
 		return (priv == PRV_S && !(xstatus & MSTATUS_TVM)) || priv == PRV_M;
 	}
 
-	bool translation_enabled() {
-		return get_effective_priv() != PRV_M && (satp & SATP32_MODE);
-	}
+	std::optional<ux_t> check_pte(std::optional<ux_t> pte, ux_t required_permissions) {
+		// Result of failed translation: propagate badness
+		if (!pte)
+			return {};
 
-	ux_t get_atp() {
-		return (satp & SATP32_PPN) << 12;
+		// If it requires X permission, we can assume it's an instruction fetch
+		uint effective_priv = required_permissions & PTE_X ? get_true_priv() : get_effective_priv_ls();
+		assert(effective_priv <= PRV_S);
+
+		// Bad S access to U:
+		if (*pte & PTE_U && effective_priv == PRV_S && !(xstatus & SSTATUS_SUM))
+			return {};
+		// Any U access to S:
+		if (!(*pte & PTE_U) && effective_priv == PRV_U)
+			return {};
+		// Permission fail:
+		ux_t permissions = *pte & (PTE_R | PTE_W | PTE_X);
+		if ((xstatus & SSTATUS_MXR) && (permissions & PTE_X))
+			permissions |= PTE_R;
+		if (~permissions & required_permissions)
+			return {};
+
+		// Nothing to complain about
+		return pte;
 	}
 };
 
@@ -450,21 +493,18 @@ struct RVCore {
 		OPC_SYSTEM   = 0b11'100
 	};
 
-	// TODO: mstatus.mxr
 	std::optional<ux_t> vmap_sv32(ux_t vaddr, ux_t atp, uint effective_priv, ux_t required_permissions) {
+		assert(effective_priv <= PRV_S);
 		// First translation stage: vaddr bits 31:22
 		ux_t addr_of_pte1 = atp + ((vaddr >> 20) & 0xffcu);
 		std::optional<ux_t> pte1 = mem.r32(addr_of_pte1);
 		if (!(pte1 && *pte1 & PTE_V))
 			return {};
-
 		if (*pte1 & (PTE_X | PTE_W | PTE_R)) {
 			// It's a leaf PTE. Permission check before touching A/D bits:
-			if (effective_priv == PRV_U && !(*pte1 & PTE_U))
+			pte1 = csr.check_pte(pte1, required_permissions);
+			if (!pte1)
 				return {};
-			if (~*pte1 & required_permissions)
-				return {};
-
 			// Looks good, so update A/D and return the mapped address
 			ux_t pte1_a_d_update = *pte1 | PTE_A | (required_permissions & PTE_W ? PTE_D : 0);
 			if (pte1_a_d_update != *pte1) {
@@ -472,7 +512,6 @@ struct RVCore {
 					return {};
 				}
 			}
-		
 			return ((*pte1 << 2) & 0xffc00000u) | (vaddr & 0x003fffffu);
 		}
 
@@ -483,11 +522,9 @@ struct RVCore {
 		if (!(pte0 && (*pte0 & PTE_V) && (*pte0 & (PTE_X | PTE_W | PTE_R))))
 			return {};
 		// Permission check
-		if (effective_priv == PRV_U && !(*pte0 & PTE_U))
+		pte0 = csr.check_pte(pte0, required_permissions);
+		if (!pte0)
 			return {};
-		if (~*pte0 & required_permissions)
-			return {};
-
 		// PTE looks good, so update A/D bits before returning the mapped address
 		ux_t pte0_a_d_update = *pte0 | PTE_A | (required_permissions & PTE_W ? PTE_D : 0);
 		if (pte0_a_d_update != *pte0) {
@@ -495,13 +532,21 @@ struct RVCore {
 				return {};
 			}
 		}
-
 		return ((*pte0 << 2) & 0xfffff000u) | (vaddr & 0xfffu);
 	}
 
-	std::optional<ux_t> vmap_if_necessary(ux_t vaddr, ux_t required_permissions) {
-		if (csr.translation_enabled()) {
-			return vmap_sv32(vaddr, csr.get_atp(), csr.get_effective_priv(), required_permissions);
+	std::optional<ux_t> vmap_ls(ux_t vaddr, ux_t required_permissions) {
+		if (csr.translation_enabled_ls()) {
+			std::optional<ux_t> paddr = vmap_sv32(vaddr, csr.get_atp(), csr.get_effective_priv_ls(), required_permissions);
+			return paddr;
+		} else {
+			return vaddr;
+		}
+	}
+
+	std::optional<ux_t> vmap_fetch(ux_t vaddr) {
+		if (csr.translation_enabled_fetch()) {
+			return vmap_sv32(vaddr, csr.get_atp(), csr.get_true_priv(), PTE_X);
 		} else {
 			return vaddr;
 		}
@@ -510,24 +555,33 @@ struct RVCore {
 	void step(MemBase32 &mem, bool trace=false) {
 		std::optional<ux_t> rd_wdata;
 		std::optional<ux_t> pc_wdata;
-		uint regnum_rd = 0;
 		std::optional<uint> exception_cause;
+		std::optional<ux_t> xtval_wdata;
+		uint regnum_rd = 0;
+
 		std::optional<ux_t> trace_csr_addr;
 		std::optional<ux_t> trace_csr_result;
+		std::optional<uint> trace_priv;
+
 		std::optional<uint16_t> fetch0, fetch1;
-		uint32_t instr;
-
-		std::optional<ux_t> fetch_addr = vmap_if_necessary(pc, PTE_X);
-		if (fetch_addr)	{
-			fetch0 = mem.r16(pc);
-			fetch1 = mem.r16(pc + 2);
+		std::optional<ux_t> fetch_paddr0 = vmap_fetch(pc);
+		if (fetch_paddr0) {
+			fetch0 = mem.r16(*fetch_paddr0);
 		}
-		instr = *fetch0 | (*fetch1 << 16);
+		std::optional<ux_t> fetch_paddr1 = vmap_fetch(pc + 2);
+		if (fetch_paddr1) {
+			fetch1 = mem.r16(*fetch_paddr1);
+		}
+		uint32_t instr = *fetch0 | (*fetch1 << 16);
 
-		if (!fetch_addr) {
+		if (!fetch_paddr0 || (fetch0 && (*fetch0 & 0x3) == 0x3 && !fetch_paddr1)) {
+			// Note xtval points to the virtual address which failed translation, which may be part
+			// way through the instruction if the instruction crosses a page boundary.
 			exception_cause = XCAUSE_INSTR_PAGEFAULT;
+			xtval_wdata = fetch_paddr0 ? pc + 2 : pc;
 		} else if (!fetch0 || ((*fetch0 & 0x3) == 0x3 && !fetch1)) {
 			exception_cause = XCAUSE_INSTR_FAULT;
+			xtval_wdata = *fetch0 ? pc + 2 : pc;
 		} else if ((instr & 0x3) == 0x3) {
 			// 32-bit instruction
 			uint opc        = instr >> 2 & 0x1f;
@@ -675,8 +729,9 @@ struct RVCore {
 					exception_cause = XCAUSE_INSTR_ILLEGAL;
 				} else if (misalign) {
 					exception_cause = XCAUSE_LOAD_ALIGN;
+					xtval_wdata = load_addr_v;
 				} else {
-					std::optional<ux_t> load_addr_p = vmap_if_necessary(load_addr_v, PTE_R);
+					std::optional<ux_t> load_addr_p = vmap_ls(load_addr_v, PTE_R);
 					if (!load_addr_p) {
 						exception_cause = XCAUSE_LOAD_PAGEFAULT;
 					} else if (funct3 == 0b000) {
@@ -709,6 +764,9 @@ struct RVCore {
 							exception_cause = XCAUSE_LOAD_FAULT;
 						}
 					}
+					if (exception_cause) {
+						xtval_wdata = load_addr_v;
+					}
 				}
 				break;
 			}
@@ -721,8 +779,9 @@ struct RVCore {
 					exception_cause = XCAUSE_INSTR_ILLEGAL;
 				} else if (misalign) {
 					exception_cause = XCAUSE_STORE_ALIGN;
+					xtval_wdata = store_addr_v;
 				} else {
-					std::optional<ux_t> store_addr_p = vmap_if_necessary(store_addr_v, PTE_W);
+					std::optional<ux_t> store_addr_p = vmap_ls(store_addr_v, PTE_W);
 					if (!store_addr_p) {
 						exception_cause = XCAUSE_STORE_PAGEFAULT;
 					} else if (funct3 == 0b000) {
@@ -738,6 +797,9 @@ struct RVCore {
 							exception_cause = XCAUSE_STORE_FAULT;
 						}
 					}
+					if (exception_cause) {
+						xtval_wdata = store_addr_v;
+					}
 				}
 				break;
 			}
@@ -747,7 +809,7 @@ struct RVCore {
 					if (rs1 & 0x3) {
 						exception_cause = XCAUSE_LOAD_ALIGN;
 					} else {
-						std::optional<ux_t> lr_addr_p = vmap_if_necessary(rs1, PTE_R);
+						std::optional<ux_t> lr_addr_p = vmap_ls(rs1, PTE_R);
 						if (!lr_addr_p) {
 							exception_cause = XCAUSE_LOAD_PAGEFAULT;
 						} else {
@@ -759,12 +821,15 @@ struct RVCore {
 							}
 						}
 					}
+					if (exception_cause) {
+						xtval_wdata = rs1;
+					}
 				} else if (RVOPC_MATCH(instr, SC_W)) {
 					if (rs1 & 0x3) {
 						exception_cause = XCAUSE_STORE_ALIGN;
 					} else {
 						if (load_reserved) {
-							std::optional<ux_t> sc_addr_p = vmap_if_necessary(rs1, PTE_W);
+							std::optional<ux_t> sc_addr_p = vmap_ls(rs1, PTE_W);
 							if (!sc_addr_p) {
 								exception_cause = XCAUSE_STORE_PAGEFAULT;
 							} else {
@@ -777,6 +842,9 @@ struct RVCore {
 							}
 						} else {
 							rd_wdata = 1;
+						}
+						if (exception_cause) {
+							xtval_wdata = rs1;
 						}
 					}
 				} else if (
@@ -792,7 +860,7 @@ struct RVCore {
 					if (rs1 & 0x3) {
 						exception_cause = XCAUSE_STORE_ALIGN;
 					} else {
-						std::optional<ux_t> amo_addr_p = vmap_if_necessary(rs1, PTE_W | PTE_R);
+						std::optional<ux_t> amo_addr_p = vmap_ls(rs1, PTE_W | PTE_R);
 						if (!amo_addr_p) {
 							exception_cause = XCAUSE_STORE_PAGEFAULT;
 						} else {
@@ -818,6 +886,9 @@ struct RVCore {
 								}
 							}
 						}
+					}
+					if (exception_cause) {
+						xtval_wdata = rs1;
 					}
 				} else {
 					exception_cause = XCAUSE_INSTR_ILLEGAL;
@@ -883,12 +954,18 @@ struct RVCore {
 				} else if (RVOPC_MATCH(instr, MRET)) {
 					if (csr.get_true_priv() == PRV_M) {
 						pc_wdata = csr.trap_mret();
+						if (trace) {
+							trace_priv = csr.get_true_priv();
+						}
 					} else {
 						exception_cause = XCAUSE_INSTR_ILLEGAL;
 					}
 				} else if (RVOPC_MATCH(instr, SRET)) {
 					if (csr.get_true_priv() >= PRV_S) {
 						pc_wdata = csr.trap_sret(pc);
+						if (trace) {
+							trace_priv = csr.get_true_priv();
+						}
 					} else {
 						exception_cause = XCAUSE_INSTR_ILLEGAL;
 					}
@@ -899,8 +976,10 @@ struct RVCore {
 					// Otherwise nop.
 				} else if (RVOPC_MATCH(instr, ECALL)) {
 					exception_cause = XCAUSE_ECALL_U + csr.get_true_priv();
+					xtval_wdata = 0;
 				} else if (RVOPC_MATCH(instr, EBREAK)) {
 					exception_cause = XCAUSE_EBREAK;
+					xtval_wdata = 0;
 				} else if (RVOPC_MATCH(instr, WFI)) {
 					// implement as nop
 				} else {
@@ -933,7 +1012,7 @@ struct RVCore {
 				if (addr_v & 0x3) {
 					exception_cause = XCAUSE_LOAD_ALIGN;
 				} else {
-					std::optional<ux_t> addr_p = vmap_if_necessary(addr_v, PTE_R);
+					std::optional<ux_t> addr_p = vmap_ls(addr_v, PTE_R);
 					if (addr_p) {
 						rd_wdata = mem.r32(*addr_p);
 						if (!rd_wdata) {
@@ -943,6 +1022,9 @@ struct RVCore {
 						exception_cause = XCAUSE_LOAD_PAGEFAULT;
 					}
 				}
+				if (exception_cause) {
+					xtval_wdata = addr_v;
+				}
 			} else if (RVOPC_MATCH(instr, C_SW)) {
 				ux_t addr_v = regs[c_rs1_s(instr)]
 					+ (GETBIT(instr, 6) << 2)
@@ -951,7 +1033,7 @@ struct RVCore {
 				if (addr_v & 0x3) {
 					exception_cause = XCAUSE_STORE_ALIGN;
 				} else {
-					std::optional<ux_t> addr_p = vmap_if_necessary(addr_v, PTE_W);
+					std::optional<ux_t> addr_p = vmap_ls(addr_v, PTE_W);
 					if (addr_p) {
 						if (!mem.w32(*addr_p, regs[c_rs2_s(instr)])) {
 							exception_cause = XCAUSE_STORE_FAULT;
@@ -959,6 +1041,9 @@ struct RVCore {
 					} else {
 						exception_cause = XCAUSE_STORE_PAGEFAULT;
 					}
+				}
+				if (exception_cause) {
+					xtval_wdata = addr_v;
 				}
 			} else {
 				exception_cause = XCAUSE_INSTR_ILLEGAL;
@@ -1041,6 +1126,7 @@ struct RVCore {
 					if (c_rs1_l(instr) == 0) {
 						// c.ebreak
 						exception_cause = XCAUSE_EBREAK;
+						xtval_wdata = 0;
 					} else {
 						// c.jalr
 						pc_wdata = regs[c_rs1_l(instr)] & -2u;
@@ -1060,7 +1146,7 @@ struct RVCore {
 				if (addr_v & 0x3) {
 					exception_cause = XCAUSE_LOAD_ALIGN;
 				} else {
-					std::optional<ux_t> addr_p = vmap_if_necessary(addr_v, PTE_R);
+					std::optional<ux_t> addr_p = vmap_ls(addr_v, PTE_R);
 					if (addr_p) {
 						rd_wdata = mem.r32(*addr_p);
 						if (!rd_wdata) {
@@ -1070,6 +1156,9 @@ struct RVCore {
 						exception_cause = XCAUSE_LOAD_PAGEFAULT;
 					}
 				}
+				if (exception_cause) {
+					xtval_wdata = addr_v;
+				}
 			} else if (RVOPC_MATCH(instr, C_SWSP)) {
 				ux_t addr_v = regs[2]
 					+ (GETBITS(instr, 12, 9) << 2)
@@ -1077,7 +1166,7 @@ struct RVCore {
 				if (addr_v & 0x3) {
 					exception_cause = XCAUSE_STORE_ALIGN;
 				} else {
-					std::optional<ux_t> addr_p = vmap_if_necessary(addr_v, PTE_W);
+					std::optional<ux_t> addr_p = vmap_ls(addr_v, PTE_W);
 					if (addr_p) {
 						if (!mem.w32(*addr_p, regs[c_rs2_l(instr)])) {
 							exception_cause = XCAUSE_STORE_FAULT;
@@ -1085,6 +1174,9 @@ struct RVCore {
 					} else {
 						exception_cause = XCAUSE_STORE_PAGEFAULT;
 					}
+				}
+				if (exception_cause) {
+					xtval_wdata = addr_v;
 				}
 			} else {
 				exception_cause = XCAUSE_INSTR_ILLEGAL;
@@ -1100,9 +1192,9 @@ struct RVCore {
 				printf("    %04x : ", instr & 0xffffu);
 			}
 			if (regnum_rd != 0 && rd_wdata) {
-				printf("%-3s  <- %08x ", friendly_reg_names[regnum_rd], *rd_wdata);
+				printf("%-3s   <- %08x ", friendly_reg_names[regnum_rd], *rd_wdata);
 			} else {
-				printf("                 ");
+				printf("                  ");
 			}
 			if (pc_wdata) {
 				printf(": pc <- %08x\n", *pc_wdata);
@@ -1110,15 +1202,28 @@ struct RVCore {
 				printf(":\n");
 			}
 			if (*trace_csr_result) {
-				printf("                   : #%03x <- %08x :\n", *trace_csr_addr, *trace_csr_result);
+				printf("                   : #%03x  <- %08x :\n", *trace_csr_addr, *trace_csr_result);
 			}
 		}
 
 		if (exception_cause) {
-			pc_wdata = csr.trap_enter(*exception_cause, pc);
-			if (trace) {
-				printf("^^^ Trap           : xcause <- %2u     : pc <- %08x\n", *exception_cause, *pc_wdata);
+			if (*exception_cause == XCAUSE_INSTR_ILLEGAL && !xtval_wdata) {
+				xtval_wdata = instr & ((instr & 0x3) == 0x3 ? 0xffffffffu : 0x0000ffffu);
 			}
+			pc_wdata = csr.trap_enter(*exception_cause, pc);
+			if (xtval_wdata) {
+				csr.trap_set_xtval(*xtval_wdata);
+			}
+			if (trace) {
+				printf("^^^ Trap           : cause <- %-2u       : pc <- %08x\n", *exception_cause, *pc_wdata);
+				trace_priv = csr.get_true_priv();
+			}
+		}
+		if (trace && trace_priv) {
+			printf("|||                : priv  <- %c        :\n", "US.M"[*trace_priv & 0x3]);
+		}
+		if (trace && xtval_wdata) {
+			printf("|||                : tval  <- %08x :\n", *xtval_wdata);
 		}
 
 		if (pc_wdata)
@@ -1156,7 +1261,7 @@ int main(int argc, char **argv) {
 
 	std::vector<std::tuple<uint32_t, uint32_t>> dump_ranges;
 	int64_t max_cycles = 100000;
-	uint32_t ramsize = 16 * (1 << 20);
+	uint32_t ramsize = 64 * (1 << 20);
 	bool load_bin = false;
 	std::string bin_path;
 	bool trace_execution = false;
