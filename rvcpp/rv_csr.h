@@ -28,18 +28,21 @@
 * MAINTENANCE, SUPPORT, UPDATES, ENHANCEMENTS, OR MODIFICATIONS.
 
 */
-
-#define XCAUSE_INSTR_MISALIGN 0x0
-#define XCAUSE_INSTR_FAULT    0x1
-#define XCAUSE_INSTR_ILLEGAL  0x2
-#define XCAUSE_EBREAK         0x3
-#define XCAUSE_LOAD_ALIGN     0x4
-#define XCAUSE_LOAD_FAULT     0x5
-#define XCAUSE_STORE_ALIGN    0x6
-#define XCAUSE_STORE_FAULT    0x7
-#define XCAUSE_ECALL_U        0x8
-#define XCAUSE_ECALL_S        0x9
-#define XCAUSE_ECALL_M        0xb
+ 
+#define XCAUSE_INSTR_MISALIGN  0x0
+#define XCAUSE_INSTR_FAULT     0x1
+#define XCAUSE_INSTR_ILLEGAL   0x2
+#define XCAUSE_EBREAK          0x3
+#define XCAUSE_LOAD_ALIGN      0x4
+#define XCAUSE_LOAD_FAULT      0x5
+#define XCAUSE_STORE_ALIGN     0x6
+#define XCAUSE_STORE_FAULT     0x7
+#define XCAUSE_ECALL_U         0x8
+#define XCAUSE_ECALL_S         0x9
+#define XCAUSE_ECALL_M         0xb
+#define XCAUSE_INSTR_PAGEFAULT 0xc
+#define XCAUSE_LOAD_PAGEFAULT  0xd
+#define XCAUSE_STORE_PAGEFAULT 0xf
 
 #define MSTATUS_UIE         0x00000001
 #define MSTATUS_SIE         0x00000002
