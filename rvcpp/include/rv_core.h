@@ -52,6 +52,10 @@ private:
 			// It's a leaf PTE. Permission check before touching A/D bits:
 			if (!csr.pte_permissions_ok(*pte1, required_permissions))
 				return {};
+			// First-level leaf PTEs must have lower PPN bits cleared, so that
+			// they cover a 4 MiB-aligned range.
+			if (*pte1 & 0x000ffc00u)
+				return {};
 			// Looks good, so update A/D and return the mapped address
 			ux_t pte1_a_d_update = *pte1 | PTE_A | (required_permissions & PTE_W ? PTE_D : 0);
 			if (pte1_a_d_update != *pte1) {
