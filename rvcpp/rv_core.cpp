@@ -739,7 +739,7 @@ void RVCore::step(MemBase32 &mem, bool trace) {
 		if (*exception_cause == XCAUSE_INSTR_ILLEGAL && !xtval_wdata) {
 			xtval_wdata = instr & ((instr & 0x3) == 0x3 ? 0xffffffffu : 0x0000ffffu);
 		}
-		pc_wdata = csr.trap_enter(*exception_cause, pc);
+		pc_wdata = csr.trap_enter_exception(*exception_cause, pc);
 		if (xtval_wdata) {
 			csr.trap_set_xtval(*xtval_wdata);
 		}
@@ -747,7 +747,15 @@ void RVCore::step(MemBase32 &mem, bool trace) {
 			printf("^^^ Trap           : cause <- %-2u       : pc <- %08x\n", *exception_cause, *pc_wdata);
 			trace_priv = csr.get_true_priv();
 		}
+	} else {
+		std::optional<ux_t> irq_target_pc = csr.trap_check_enter_irq(pc_wdata ? *pc_wdata : pc);
+		if (irq_target_pc) {
+			pc_wdata = irq_target_pc;
+			if (trace)
+				printf("^^^ IRQ            : priv  <- %c        : pc <- %08x\n", "US.M"[csr.get_true_priv() & 0x3], *pc_wdata);
+		}
 	}
+
 	if (trace && trace_priv) {
 		printf("|||                : priv  <- %c        :\n", "US.M"[*trace_priv & 0x3]);
 	}
@@ -761,5 +769,6 @@ void RVCore::step(MemBase32 &mem, bool trace) {
 		pc = pc + ((instr & 0x3) == 0x3 ? 4 : 2);
 	if (rd_wdata && regnum_rd != 0)
 		regs[regnum_rd] = *rd_wdata;
-	csr.step();
+
+	csr.step_counters();
 }

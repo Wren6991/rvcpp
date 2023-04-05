@@ -11,10 +11,15 @@ class RVCSR {
 	// Current core privilege level (M/S/U)
 	uint priv;
 
+	// Latched IRQ signals into core
+	bool irq_t;
+	bool irq_s;
+	bool irq_e;
+
 	// Machine trap handling
 	ux_t xstatus;
-	ux_t mie;
-	ux_t mip;
+	ux_t xie;
+	ux_t xip;
 	ux_t mtvec;
 	ux_t mtval;
 	ux_t mscratch;
@@ -32,8 +37,6 @@ class RVCSR {
 
 	// Supervisor trap handling
 	// (Note mstatus/sstatus are views of xstatus)
-	ux_t sie;
-	ux_t sip;
 	ux_t stvec;
 	ux_t stval;
 	ux_t scounteren;
@@ -41,6 +44,19 @@ class RVCSR {
 	ux_t sepc;
 	ux_t scause;
 	ux_t satp;
+
+	// xip's read value is a combination of local read/write bits and external
+	// interrupt signals
+	ux_t get_effective_xip() {
+		return xip |
+			(irq_t ? MIP_MSIP | MIP_SSIP : 0) |
+			(irq_s ? MIP_MTIP | MIP_STIP : 0) |
+			(irq_e ? MIP_MEIP | MIP_SEIP : 0);
+	}
+
+	// Internal interface for updating trap state once a trap's target
+	// privilege has been calculated. Returns trap target pc.
+	ux_t trap_enter_at_priv(uint xcause, ux_t xepc, uint target_priv);
 
 public:
 
@@ -54,8 +70,8 @@ public:
 		priv       = 3;
 
 		xstatus    = 0;
-		mie        = 0;
-		mip        = 0;
+		xie        = 0;
+		xip        = 0;
 		mtvec      = 0;
 		mtval      = 0;
 		mscratch   = 0;
@@ -70,8 +86,6 @@ public:
 		minstret   = 0;
 		minstreth  = 0;
 
-		sie        = 0;
-		sip        = 0;
 		stvec      = 0;
 		stval      = 0;
 		scounteren = 0;
@@ -81,7 +95,7 @@ public:
 		satp       = 0;
 	}
 
-	void step();
+	void step_counters();
 
 	// Returns None on permission/decode fail
 	std::optional<ux_t> read(uint16_t addr, bool side_effect=true);
@@ -89,8 +103,14 @@ public:
 	// Returns false on permission/decode fail
 	bool write(uint16_t addr, ux_t data, uint op=WRITE);
 
-	// Update trap state (including change of privilege level), return trap target PC
-	ux_t trap_enter(uint xcause, ux_t xepc);
+	// Determine target privilege level of an exception, update trap state
+	// (including change of privilege level), return trap target PC
+	ux_t trap_enter_exception(uint xcause, ux_t xepc);
+
+	// If there is currently a pending IRQ that must be entered, then
+	// determine its target privilege level, update trap state, and return
+	// trap target PC. Otherwise return None.
+	std::optional<ux_t> trap_check_enter_irq(ux_t xepc);
 
 	// Update trap state, return mepc:
 	ux_t trap_mret();
@@ -153,6 +173,18 @@ public:
 
 		// Nothing to complain about
 		return true;
+	}
+
+	void set_irq_t(bool irq) {
+		irq_t = irq;
+	}
+
+	void set_irq_s(bool irq) {
+		irq_s = irq;
+	}
+
+	void set_irq_e(bool irq) {
+		irq_e = irq;
 	}
 };
 

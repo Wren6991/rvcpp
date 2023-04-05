@@ -21,5 +21,9 @@ Usage: tb [--bin x.bin] [--dump start end] [--vcd x.vcd] [--cycles n] [--cpuret]
     --trace          : Print out execution tracing info
     --cpuret         : Testbench's return code is the return code written to
                        IO_EXIT by the CPU, or -1 if timed out.
-$ 
+$ cd ../test/riscv-tests
+$ ./run-isa-tests.sh
+...
+$ echo $?
+0
 ```

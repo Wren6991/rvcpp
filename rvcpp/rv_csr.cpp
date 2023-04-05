@@ -2,7 +2,7 @@
 #include <optional>
 #include <cassert>
 
-void RVCSR::step() {
+void RVCSR::step_counters() {
 	uint64_t mcycle_next = ((uint64_t)mcycleh << 32) + mcycle + 1u;
 	mcycle = mcycle_next & 0xffffffffu;
 	mcycleh = mcycle_next >> 32;
@@ -28,6 +28,22 @@ static const ux_t MSTATUS_MASK =
 	MSTATUS_TW |
 	MSTATUS_TSR;
 
+static const ux_t SIP_MASK =
+	MIP_SSIP |
+	MIP_STIP |
+	MIP_SEIP;
+
+static const ux_t ALL_MIP_BITS =
+	SIP_MASK |
+	MIP_MSIP |
+	MIP_MTIP |
+	MIP_MEIP;
+
+static const ux_t MIP_R_MASK = ALL_MIP_BITS;
+static const ux_t MIP_W_MASK = SIP_MASK;
+static const ux_t MIE_R_MASK = ALL_MIP_BITS;
+static const ux_t MIE_W_MASK = ALL_MIP_BITS;
+
 // Returns None on permission/decode fail
 std::optional<ux_t> RVCSR::read(uint16_t addr, __attribute__((unused)) bool side_effect) {
 	// Minimum privilege check
@@ -52,8 +68,8 @@ std::optional<ux_t> RVCSR::read(uint16_t addr, __attribute__((unused)) bool side
 
 		// Machine trap handling
 		case CSR_MSTATUS:    return xstatus & MSTATUS_MASK;
-		case CSR_MIE:        return mie;
-		case CSR_MIP:        return mip;
+		case CSR_MIE:        return xie & MIE_R_MASK;
+		case CSR_MIP:        return get_effective_xip() & MIP_R_MASK;
 		case CSR_MTVEC:      return mtvec;
 		case CSR_MSCRATCH:   return mscratch;
 		case CSR_MEPC:       return mepc;
@@ -71,8 +87,8 @@ std::optional<ux_t> RVCSR::read(uint16_t addr, __attribute__((unused)) bool side
 
 		// Supervisor trap handling
 		case CSR_SSTATUS:    return xstatus & SSTATUS_MASK;
-		case CSR_SIE:        return sie;
-		case CSR_SIP:        return sip;
+		case CSR_SIE:        return xie & SIP_MASK;
+		case CSR_SIP:        return get_effective_xip() & SIP_MASK & mideleg;
 		case CSR_STVEC:      return stvec;
 		case CSR_SCOUNTEREN: return scounteren;
 		case CSR_SSCRATCH:   return sscratch;
@@ -110,6 +126,8 @@ bool RVCSR::write(uint16_t addr, ux_t data, uint op) {
 
 	bool permit_satp = priv >= PRV_M || !(xstatus & MSTATUS_TVM);
 
+	ux_t sip_mask_deleg = SIP_MASK & mideleg;
+
 	switch (addr) {
 		case CSR_MISA:                                                                       break;
 		case CSR_MHARTID:                                                                    break;
@@ -118,8 +136,8 @@ bool RVCSR::write(uint16_t addr, ux_t data, uint op) {
 		case CSR_MVENDORID:                                                                  break;
 
 		case CSR_MSTATUS:    xstatus    = (data & MSTATUS_MASK) | (xstatus & ~MSTATUS_MASK); break;
-		case CSR_MIE:        mie        = data;                                              break;
-		case CSR_MIP:                                                                        break;
+		case CSR_MIE:        xie        = (data & MIE_W_MASK) | (xie & ~MIE_W_MASK);         break;
+		case CSR_MIP:        xip        = (data & MIP_W_MASK) | (xip & ~MIP_W_MASK);         break;
 		case CSR_MTVEC:      mtvec      = data & 0xfffffffdu;                                break;
 		case CSR_MSCRATCH:   mscratch   = data;                                              break;
 		case CSR_MEPC:       mepc       = data & 0xfffffffeu;                                break;
@@ -135,8 +153,8 @@ bool RVCSR::write(uint16_t addr, ux_t data, uint op) {
 		case CSR_MINSTRETH:  minstreth  = data;                                              break;
 
 		case CSR_SSTATUS:    xstatus    = (data & SSTATUS_MASK) | (xstatus & ~SSTATUS_MASK); break;
-		case CSR_SIE:        sie        = data;                                              break;
-		case CSR_SIP:                                                                        break;
+		case CSR_SIE:        xie        = (data & SIP_MASK) | (xie & ~SIP_MASK);             break;
+		case CSR_SIP:        xip        = (data & sip_mask_deleg) | (xip & ~sip_mask_deleg); break;
 		case CSR_STVEC:      stvec      = data & 0xfffffffdu;                                break;
 		case CSR_SCOUNTEREN: scounteren = data & 0x7u;                                       break;
 		case CSR_SSCRATCH:   sscratch   = data;                                              break;
@@ -150,15 +168,32 @@ bool RVCSR::write(uint16_t addr, ux_t data, uint op) {
 	return true;
 }
 
-// Update trap state (including change of privilege level), return trap target PC
-ux_t RVCSR::trap_enter(uint xcause, ux_t xepc) {
+ux_t RVCSR::trap_enter_exception(uint xcause, ux_t xepc) {
 	assert(xcause < 32);
-
 	uint target_priv = medeleg & (1u << xcause) ? PRV_S : PRV_M;
 	if (target_priv < priv) {
 		target_priv = priv;
 	}
+	return trap_enter_at_priv(xcause, xepc, target_priv);
+}
 
+std::optional<ux_t> RVCSR::trap_check_enter_irq(ux_t xepc) {
+	ux_t m_targeted_irqs = get_effective_xip() & xie & MIP_R_MASK & ~mideleg;
+	ux_t s_targeted_irqs = get_effective_xip() & xie & SIP_MASK   &  mideleg;
+	bool take_m_irq = m_targeted_irqs && ((xstatus & MSTATUS_MIE) || priv < PRV_S);
+	bool take_s_irq = s_targeted_irqs && priv <= PRV_S && ((xstatus & SSTATUS_SIE) || priv < PRV_S);
+	if (take_m_irq) {
+		ux_t cause = (1u << 31) | __builtin_ctz(m_targeted_irqs);
+		return trap_enter_at_priv(cause, xepc, PRV_M);
+	} else if (take_s_irq) {
+		ux_t cause = (1u << 31) | __builtin_ctz(s_targeted_irqs);
+		return trap_enter_at_priv(cause, xepc, PRV_S);
+	} else {
+		return {};
+	}
+}
+
+ux_t RVCSR::trap_enter_at_priv(uint xcause, ux_t xepc, uint target_priv) {
 	if (target_priv == PRV_M) {
 		// Trap to M-mode
 		xstatus = (xstatus & ~MSTATUS_MPP) | (priv << 11);
@@ -196,7 +231,6 @@ ux_t RVCSR::trap_enter(uint xcause, ux_t xepc) {
 	}
 }
 
-// Update trap state, return mepc:
 ux_t RVCSR::trap_mret() {
 	priv = GETBITS(xstatus, 12, 11);
 	xstatus &= ~MSTATUS_MPP;
@@ -212,7 +246,9 @@ ux_t RVCSR::trap_mret() {
 
 ux_t RVCSR::trap_sret(ux_t pc) {
 	if (xstatus & MSTATUS_TSR && priv == PRV_S) {
-		return trap_enter(XCAUSE_INSTR_ILLEGAL, pc);
+		// Note M-mode may have delegated this exception, which is perhaps
+		// unwise, but we have to respect its decisions
+		return trap_enter_exception(XCAUSE_INSTR_ILLEGAL, pc);
 	} else {
 		priv = GETBIT(xstatus, 8);
 		xstatus &= ~SSTATUS_SPP;
