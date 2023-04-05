@@ -15,6 +15,10 @@
 // - M-mode and S-mode traps
 // - Sv32 virtual memory
 
+#define RAM_BASE 0x80000000u
+#define RAM_SIZE_DEFAULT (64 * 1024 * 1024)
+#define IO_BASE 0xe0000000u
+
 const char *help_str =
 "Usage: tb [--bin x.bin] [--dump start end] [--vcd x.vcd] [--cycles n] [--cpuret]\n"
 "    --bin x.bin      : Flat binary file loaded to address 0x0 in RAM\n"
@@ -38,7 +42,7 @@ int main(int argc, char **argv) {
 
 	std::vector<std::tuple<uint32_t, uint32_t>> dump_ranges;
 	int64_t max_cycles = 100000;
-	uint32_t ramsize = 64 * (1 << 20);
+	uint32_t ramsize = RAM_SIZE_DEFAULT;
 	bool load_bin = false;
 	std::string bin_path;
 	bool trace_execution = false;
@@ -95,8 +99,8 @@ int main(int argc, char **argv) {
 	FlatMem32 ram(ramsize);
 	TBMemIO io;
 	MemMap32 mem;
-	mem.add(0, ramsize, &ram);
-	mem.add(0x80000000u, 12, &io);
+	mem.add(RAM_BASE, ramsize, &ram);
+	mem.add(IO_BASE, 12, &io);
 
 	if (load_bin) {
 		std::ifstream fd(bin_path, std::ios::binary | std::ios::ate);
@@ -109,7 +113,7 @@ int main(int argc, char **argv) {
 		fd.read((char*)ram.mem, bin_size);
 	}
 
-	RVCore core(mem);
+	RVCore core(mem, RAM_BASE);
 
 	int64_t cyc;
 	int rc = 0;

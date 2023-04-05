@@ -16,7 +16,7 @@ struct RVCore {
 	bool load_reserved;
 	MemBase32 &mem;
 
-	RVCore(MemBase32 &_mem, ux_t reset_vector=0x40) : mem(_mem) {
+	RVCore(MemBase32 &_mem, ux_t reset_vector) : mem(_mem) {
 		std::fill(std::begin(regs), std::end(regs), 0);
 		pc = reset_vector;
 		load_reserved = false;
