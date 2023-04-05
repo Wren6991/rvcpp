@@ -23,6 +23,7 @@ static const ux_t MSTATUS_MASK =
 	MSTATUS_MIE |
 	MSTATUS_MPIE |
 	MSTATUS_MPP |
+	MSTATUS_MPRV |
 	MSTATUS_TVM |
 	MSTATUS_TW |
 	MSTATUS_TSR;
@@ -197,10 +198,10 @@ ux_t RVCSR::trap_enter(uint xcause, ux_t xepc) {
 
 // Update trap state, return mepc:
 ux_t RVCSR::trap_mret() {
-	uint pp = GETBITS(xstatus, 12, 11);
-	if (pp != PRV_M)
+	priv = GETBITS(xstatus, 12, 11);
+	xstatus &= ~MSTATUS_MPP;
+	if (priv != PRV_M)
 		xstatus &= ~MSTATUS_MPRV;
-	priv = pp;
 
 	if (xstatus & MSTATUS_MPIE)
 		xstatus |= MSTATUS_MIE;
@@ -214,6 +215,7 @@ ux_t RVCSR::trap_sret(ux_t pc) {
 		return trap_enter(XCAUSE_INSTR_ILLEGAL, pc);
 	} else {
 		priv = GETBIT(xstatus, 8);
+		xstatus &= ~SSTATUS_SPP;
 		if (xstatus & SSTATUS_SPIE)
 			xstatus |= SSTATUS_SIE;
 		xstatus &= ~SSTATUS_SPIE;
