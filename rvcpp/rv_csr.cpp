@@ -180,8 +180,8 @@ ux_t RVCSR::trap_enter_exception(uint xcause, ux_t xepc) {
 std::optional<ux_t> RVCSR::trap_check_enter_irq(ux_t xepc) {
 	ux_t m_targeted_irqs = get_effective_xip() & xie & MIP_R_MASK & ~mideleg;
 	ux_t s_targeted_irqs = get_effective_xip() & xie & SIP_MASK   &  mideleg;
-	bool take_m_irq = m_targeted_irqs && ((xstatus & MSTATUS_MIE) || priv < PRV_S);
-	bool take_s_irq = s_targeted_irqs && priv <= PRV_S && ((xstatus & SSTATUS_SIE) || priv < PRV_S);
+	bool take_m_irq = m_targeted_irqs && ((xstatus & MSTATUS_MIE) || priv < PRV_M);
+	bool take_s_irq = s_targeted_irqs && ((xstatus & SSTATUS_SIE) || priv < PRV_S) && priv <= PRV_S ;
 	if (take_m_irq) {
 		ux_t cause = (1u << 31) | __builtin_ctz(m_targeted_irqs);
 		return trap_enter_at_priv(cause, xepc, PRV_M);
