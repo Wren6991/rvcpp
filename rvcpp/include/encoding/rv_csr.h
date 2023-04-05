@@ -1,5 +1,5 @@
-#ifndef _RVCPP_RV_CSR_H
-#define _RVCPP_RV_CSR_H
+#ifndef _ENCODING_RV_CSR_H
+#define _ENCODING_RV_CSR_H
 
 // Adapted in part from encoding.h in riscv-test-env
 // Original licence/copyright notice follows:

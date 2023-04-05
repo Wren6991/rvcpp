@@ -3,6 +3,10 @@
 
 #include "rv_types.h"
 #include <optional>
+#include <tuple>
+#include <cassert>
+#include <vector>
+#include <cstdio>
 
 struct MemBase32 {
 	virtual std::optional<uint8_t> r8(__attribute__((unused)) ux_t addr) {return {};}

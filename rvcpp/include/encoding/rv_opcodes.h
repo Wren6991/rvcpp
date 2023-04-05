@@ -1,5 +1,5 @@
-#ifndef _RV_OPCODES_H
-#define _RV_OPCODES_H
+#ifndef _ENCODING_RV_OPCODES_H
+#define _ENCODING_RV_OPCODES_H
 
 // Base ISA (some of these are Z now)
 #define RVOPC_BEQ_BITS         0b00000000000000000000000001100011
