@@ -1,3 +1,6 @@
 [submodule "test/riscv-tests/riscv-tests"]
 	path = test/riscv-tests/riscv-tests
 	url = https://github.com/Wren6991/riscv-tests.git
+[submodule "test/opensbi/opensbi"]
+	path = test/opensbi/opensbi
+	url = git@github.com:Wren6991/opensbi.git
