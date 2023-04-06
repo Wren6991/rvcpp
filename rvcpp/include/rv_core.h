@@ -36,6 +36,8 @@ struct RVCore {
 		assert(!(ram_base_ & 0x3));
 		assert(!(ram_size_ & 0x3));
 		assert(ram_base_ + ram_size_ >= ram_base_);
+		for (ux_t i = 0; i < ram_size_ / sizeof(ux_t); ++i)
+			ram[i] = 0;
 	}
 
 	~RVCore() {

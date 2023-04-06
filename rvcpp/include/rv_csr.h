@@ -186,6 +186,10 @@ public:
 	void set_irq_e(bool irq) {
 		irq_e = irq;
 	}
+
+	ux_t get_xcause() {
+		return priv == PRV_M ? mcause : scause;
+	}
 };
 
 #endif

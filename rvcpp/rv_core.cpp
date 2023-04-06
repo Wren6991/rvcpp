@@ -720,17 +720,18 @@ void RVCore::step(bool trace) {
 		} else {
 			printf("    %04x : ", instr & 0xffffu);
 		}
-		if (regnum_rd != 0 && rd_wdata) {
-			printf("%-3s   <- %08x ", friendly_reg_names[regnum_rd], *rd_wdata);
+		bool gpr_writeback = regnum_rd != 0 && rd_wdata;
+		if (gpr_writeback) {
+			printf("%-3s   <- %08x :\n", friendly_reg_names[regnum_rd], *rd_wdata);
+		} else if (pc_wdata) {
+			printf("pc    <- %08x <\n", *pc_wdata);
 		} else {
-			printf("                  ");
+			printf("                  :\n");
 		}
-		if (pc_wdata) {
-			printf(": pc <- %08x\n", *pc_wdata);
-		} else {
-			printf(":\n");
+		if (pc_wdata && gpr_writeback) {
+			printf("                   : pc    <- %08x <\n", *pc_wdata);
 		}
-		if (*trace_csr_result) {
+		if (trace_csr_result) {
 			printf("                   : #%03x  <- %08x :\n", *trace_csr_addr, *trace_csr_result);
 		}
 	}
@@ -744,15 +745,19 @@ void RVCore::step(bool trace) {
 			csr.trap_set_xtval(*xtval_wdata);
 		}
 		if (trace) {
-			printf("^^^ Trap           : cause <- %-2u       : pc <- %08x\n", *exception_cause, *pc_wdata);
+			printf("^^^ Trap           : cause <- %-2u       :\n", *exception_cause);
+			printf("|||                : pc    <- %08x <\n", *pc_wdata);
 			trace_priv = csr.get_true_priv();
 		}
 	} else {
 		std::optional<ux_t> irq_target_pc = csr.trap_check_enter_irq(pc_wdata ? *pc_wdata : pc);
 		if (irq_target_pc) {
 			pc_wdata = irq_target_pc;
-			if (trace)
-				printf("^^^ IRQ            : priv  <- %c        : pc <- %08x\n", "US.M"[csr.get_true_priv() & 0x3], *pc_wdata);
+			if (trace) {
+				printf("^^^ IRQ            : cause <- IRQ + %-2u :\n", csr.get_xcause() & ((1u << 31) - 1));
+				printf("|||                : pc    <- %08x <\n", *pc_wdata);
+				trace_priv = csr.get_true_priv();
+			}
 		}
 	}
 
