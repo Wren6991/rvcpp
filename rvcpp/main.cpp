@@ -1,5 +1,4 @@
 #include <cstdio>
-#include <iostream>
 #include <fstream>
 
 #include "rv_mem.h"
@@ -36,18 +35,19 @@ const char *help_str =
 "    --cpuret         : Testbench's return code is the return code written to\n"
 "                       IO_EXIT by the CPU, or -1 if timed out.\n";
 
-void exit_help(std::string errtext = "") {
-	std::cerr << errtext << help_str;
+void exit_help(const char *errtext) {
+	fputs(errtext, stderr);
+	fputs(help_str, stderr);
 	exit(-1);
 }
 
 int main(int argc, char **argv) {
 	if (argc < 2)
-		exit_help();
+		exit_help("");
 
 	std::vector<std::tuple<uint32_t, uint32_t>> dump_ranges;
 	int64_t max_cycles = 100000;
-	uint32_t ramsize = RAM_SIZE_DEFAULT;
+	uint32_t ram_size = RAM_SIZE_DEFAULT;
 	bool load_bin = false;
 	std::string bin_path;
 	bool trace_execution = false;
@@ -86,7 +86,7 @@ int main(int argc, char **argv) {
 		else if (s == "--memsize") {
 			if (argc - i < 2)
 				exit_help("Option --memsize requires an argument\n");
-			ramsize = 1024 * std::stol(argv[i + 1], 0, 0);
+			ram_size = 1024 * std::stol(argv[i + 1], 0, 0);
 			i += 1;
 		}
 		else if (s == "--trace") {
@@ -96,7 +96,7 @@ int main(int argc, char **argv) {
 			propagate_return_code = true;
 		}
 		else {
-			std::cerr << "Unrecognised argument " << s << "\n";
+			fprintf(stderr, "Unrecognised argument %s\n", s.c_str());
 			exit_help("");
 		}
 	}
@@ -111,13 +111,13 @@ int main(int argc, char **argv) {
 	mem.add(UART8250_BASE, 8, &uart);
 	mem.add(MTIMER_BASE, 16, &mtimer);
 
-	RVCore core(mem, RAM_BASE, RAM_BASE, ramsize);
+	RVCore core(mem, RAM_BASE, RAM_BASE, ram_size);
 
 	if (load_bin) {
 		std::ifstream fd(bin_path, std::ios::binary | std::ios::ate);
 		std::streamsize bin_size = fd.tellg();
-		if (bin_size > ramsize) {
-			std::cerr << "Binary file (" << bin_size << " bytes) is larger than memory (" << ramsize << " bytes)\n";
+		if (bin_size > ram_size) {
+			fprintf(stderr, "Binary file (%ld bytes) is larger than memory (%u bytes)\n", bin_size, ram_size);
 			return -1;
 		}
 		fd.seekg(0, std::ios::beg);
