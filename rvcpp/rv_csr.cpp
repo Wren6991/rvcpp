@@ -60,7 +60,7 @@ std::optional<ux_t> RVCSR::read(uint16_t addr, __attribute__((unused)) bool side
 
 	switch (addr) {
 		// Machine ID
-		case CSR_MISA:       return 0x40101105; // RV32IMAC + U
+		case CSR_MISA:       return 0x40141105; // RV32IMAC + SU
 		case CSR_MHARTID:    return 0;
 		case CSR_MARCHID:    return 0;
 		case CSR_MIMPID:     return 0;

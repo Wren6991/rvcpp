@@ -4,6 +4,8 @@
 
 #include "rv_mem.h"
 #include "rv_core.h"
+#include "mmio/uart8250.h"
+#include "mmio/mtimer.h"
 
 // Minimal RISC-V interpreter, supporting:
 // - RV32I
@@ -15,18 +17,21 @@
 // - M-mode and S-mode traps
 // - Sv32 virtual memory
 
-#define RAM_BASE 0x80000000u
+#define RAM_BASE         0x80000000u
 #define RAM_SIZE_DEFAULT (64 * 1024 * 1024)
-#define IO_BASE 0xe0000000u
+#define IO_BASE          0xe0000000u
+#define TBIO_BASE        IO_BASE
+#define UART8250_BASE    (IO_BASE + 0x4000)
+#define MTIMER_BASE      (IO_BASE + 0x8000)
 
 const char *help_str =
-"Usage: tb [--bin x.bin] [--dump start end] [--vcd x.vcd] [--cycles n] [--cpuret]\n"
+"Usage: rvcpp [--bin x.bin] [--dump start end] [--vcd x.vcd] [--cycles n] [--cpuret]\n"
 "    --bin x.bin      : Flat binary file loaded to address 0x0 in RAM\n"
 "    --vcd x.vcd      : Dummy option for compatibility with CXXRTL tb\n"
 "    --dump start end : Print out memory contents between start and end (exclusive)\n"
 "                       after execution finishes. Can be passed multiple times.\n"
 "    --cycles n       : Maximum number of cycles to run before exiting.\n"
-"    --memsize n      : Memory size in units of 1024 bytes, default is 16 MB\n"
+"    --memsize n      : Memory size in units of 1024 bytes, default is 64 MB\n"
 "    --trace          : Print out execution tracing info\n"
 "    --cpuret         : Testbench's return code is the return code written to\n"
 "                       IO_EXIT by the CPU, or -1 if timed out.\n";
@@ -99,8 +104,12 @@ int main(int argc, char **argv) {
 	FlatMem32 ram(ramsize);
 	TBMemIO io;
 	MemMap32 mem;
+	UART8250 uart;
+	MTimer mtimer;
 	mem.add(RAM_BASE, ramsize, &ram);
-	mem.add(IO_BASE, 12, &io);
+	mem.add(TBIO_BASE, 12, &io);
+	mem.add(UART8250_BASE, 8, &uart);
+	mem.add(MTIMER_BASE, 16, &mtimer);
 
 	if (load_bin) {
 		std::ifstream fd(bin_path, std::ios::binary | std::ios::ate);
@@ -118,8 +127,13 @@ int main(int argc, char **argv) {
 	int64_t cyc;
 	int rc = 0;
 	try {
-		for (cyc = 0; cyc < max_cycles; ++cyc)
+		for (cyc = 0; cyc < max_cycles; ++cyc) {
 			core.step(mem, trace_execution);
+			if (!(cyc & 0xfff)) {
+				mtimer.step_time();
+				core.csr.set_irq_t(mtimer.irq_status(0));
+			}
+		}
 		if (cyc == max_cycles) {
 			printf("Timed out.\n");
 			if (propagate_return_code)
