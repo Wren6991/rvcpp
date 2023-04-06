@@ -81,7 +81,7 @@ static inline uint c_rs2_l(uint32_t instr) {
 	return GETBITS(instr, 6, 2);
 }
 
-void RVCore::step(MemBase32 &mem, bool trace) {
+void RVCore::step(bool trace) {
 	std::optional<ux_t> rd_wdata;
 	std::optional<ux_t> pc_wdata;
 	std::optional<uint> exception_cause;
@@ -95,11 +95,11 @@ void RVCore::step(MemBase32 &mem, bool trace) {
 	std::optional<uint16_t> fetch0, fetch1;
 	std::optional<ux_t> fetch_paddr0 = vmap_fetch(pc);
 	if (fetch_paddr0) {
-		fetch0 = mem.r16(*fetch_paddr0);
+		fetch0 = r16(*fetch_paddr0);
 	}
 	std::optional<ux_t> fetch_paddr1 = vmap_fetch(pc + 2);
 	if (fetch_paddr1) {
-		fetch1 = mem.r16(*fetch_paddr1);
+		fetch1 = r16(*fetch_paddr1);
 	}
 	uint32_t instr = *fetch0 | (*fetch1 << 16);
 
@@ -264,31 +264,31 @@ void RVCore::step(MemBase32 &mem, bool trace) {
 				if (!load_addr_p) {
 					exception_cause = XCAUSE_LOAD_PAGEFAULT;
 				} else if (funct3 == 0b000) {
-					rd_wdata = mem.r8(*load_addr_p);
+					rd_wdata = r8(*load_addr_p);
 					if (rd_wdata) {
 						rd_wdata = sext(*rd_wdata, 7);
 					} else {
 						exception_cause = XCAUSE_LOAD_FAULT;
 					}
 				} else if (funct3 == 0b001) {
-					rd_wdata = mem.r16(*load_addr_p);
+					rd_wdata = r16(*load_addr_p);
 					if (rd_wdata) {
 						rd_wdata = sext(*rd_wdata, 15);
 					} else {
 						exception_cause = XCAUSE_LOAD_FAULT;
 					}
 				} else if (funct3 == 0b010) {
-					rd_wdata = mem.r32(*load_addr_p);
+					rd_wdata = r32(*load_addr_p);
 					if (!rd_wdata) {
 						exception_cause = XCAUSE_LOAD_FAULT;
 					}
 				} else if (funct3 == 0b100) {
-					rd_wdata = mem.r8(*load_addr_p);
+					rd_wdata = r8(*load_addr_p);
 					if (!rd_wdata) {
 						exception_cause = XCAUSE_LOAD_FAULT;
 					}
 				} else if (funct3 == 0b101) {
-					rd_wdata = mem.r16(*load_addr_p);
+					rd_wdata = r16(*load_addr_p);
 					if (!rd_wdata) {
 						exception_cause = XCAUSE_LOAD_FAULT;
 					}
@@ -314,15 +314,15 @@ void RVCore::step(MemBase32 &mem, bool trace) {
 				if (!store_addr_p) {
 					exception_cause = XCAUSE_STORE_PAGEFAULT;
 				} else if (funct3 == 0b000) {
-					if (!mem.w8(*store_addr_p, rs2 & 0xffu)) {
+					if (!w8(*store_addr_p, rs2 & 0xffu)) {
 						exception_cause = XCAUSE_STORE_FAULT;
 					}
 				} else if (funct3 == 0b001) {
-					if (!mem.w16(*store_addr_p, rs2 & 0xffffu)) {
+					if (!w16(*store_addr_p, rs2 & 0xffffu)) {
 						exception_cause = XCAUSE_STORE_FAULT;
 					}
 				} else if (funct3 == 0b010) {
-					if (!mem.w32(*store_addr_p, rs2)) {
+					if (!w32(*store_addr_p, rs2)) {
 						exception_cause = XCAUSE_STORE_FAULT;
 					}
 				}
@@ -342,7 +342,7 @@ void RVCore::step(MemBase32 &mem, bool trace) {
 					if (!lr_addr_p) {
 						exception_cause = XCAUSE_LOAD_PAGEFAULT;
 					} else {
-						rd_wdata = mem.r32(*lr_addr_p);
+						rd_wdata = r32(*lr_addr_p);
 						if (rd_wdata) {
 							load_reserved = true;
 						} else {
@@ -363,7 +363,7 @@ void RVCore::step(MemBase32 &mem, bool trace) {
 							exception_cause = XCAUSE_STORE_PAGEFAULT;
 						} else {
 							load_reserved = false;
-							if (mem.w32(*sc_addr_p, rs2)) {
+							if (w32(*sc_addr_p, rs2)) {
 								rd_wdata = 0;
 							} else {
 								exception_cause = XCAUSE_STORE_FAULT;
@@ -393,21 +393,21 @@ void RVCore::step(MemBase32 &mem, bool trace) {
 					if (!amo_addr_p) {
 						exception_cause = XCAUSE_STORE_PAGEFAULT;
 					} else {
-						rd_wdata = mem.r32(*amo_addr_p);
+						rd_wdata = r32(*amo_addr_p);
 						if (!rd_wdata) {
 							exception_cause = XCAUSE_STORE_FAULT; // Yes, AMO/Store
 						} else {
 							bool write_success = false;
 							switch (instr & RVOPC_AMOSWAP_W_MASK) {
-								case RVOPC_AMOSWAP_W_BITS: write_success = mem.w32(*amo_addr_p, rs2);                                            break;
-								case RVOPC_AMOADD_W_BITS:  write_success = mem.w32(*amo_addr_p, *rd_wdata + rs2);                                break;
-								case RVOPC_AMOXOR_W_BITS:  write_success = mem.w32(*amo_addr_p, *rd_wdata ^ rs2);                                break;
-								case RVOPC_AMOAND_W_BITS:  write_success = mem.w32(*amo_addr_p, *rd_wdata & rs2);                                break;
-								case RVOPC_AMOOR_W_BITS:   write_success = mem.w32(*amo_addr_p, *rd_wdata | rs2);                                break;
-								case RVOPC_AMOMIN_W_BITS:  write_success = mem.w32(*amo_addr_p, (sx_t)*rd_wdata < (sx_t)rs2 ? *rd_wdata : rs2);  break;
-								case RVOPC_AMOMAX_W_BITS:  write_success = mem.w32(*amo_addr_p, (sx_t)*rd_wdata > (sx_t)rs2 ? *rd_wdata : rs2);  break;
-								case RVOPC_AMOMINU_W_BITS: write_success = mem.w32(*amo_addr_p, *rd_wdata < rs2 ? *rd_wdata : rs2);              break;
-								case RVOPC_AMOMAXU_W_BITS: write_success = mem.w32(*amo_addr_p, *rd_wdata > rs2 ? *rd_wdata : rs2);              break;
+								case RVOPC_AMOSWAP_W_BITS: write_success = w32(*amo_addr_p, rs2);                                            break;
+								case RVOPC_AMOADD_W_BITS:  write_success = w32(*amo_addr_p, *rd_wdata + rs2);                                break;
+								case RVOPC_AMOXOR_W_BITS:  write_success = w32(*amo_addr_p, *rd_wdata ^ rs2);                                break;
+								case RVOPC_AMOAND_W_BITS:  write_success = w32(*amo_addr_p, *rd_wdata & rs2);                                break;
+								case RVOPC_AMOOR_W_BITS:   write_success = w32(*amo_addr_p, *rd_wdata | rs2);                                break;
+								case RVOPC_AMOMIN_W_BITS:  write_success = w32(*amo_addr_p, (sx_t)*rd_wdata < (sx_t)rs2 ? *rd_wdata : rs2);  break;
+								case RVOPC_AMOMAX_W_BITS:  write_success = w32(*amo_addr_p, (sx_t)*rd_wdata > (sx_t)rs2 ? *rd_wdata : rs2);  break;
+								case RVOPC_AMOMINU_W_BITS: write_success = w32(*amo_addr_p, *rd_wdata < rs2 ? *rd_wdata : rs2);              break;
+								case RVOPC_AMOMAXU_W_BITS: write_success = w32(*amo_addr_p, *rd_wdata > rs2 ? *rd_wdata : rs2);              break;
 								default:                   assert(false);                                                                        break;
 							}
 							if (!write_success) {
@@ -543,7 +543,7 @@ void RVCore::step(MemBase32 &mem, bool trace) {
 			} else {
 				std::optional<ux_t> addr_p = vmap_ls(addr_v, PTE_R);
 				if (addr_p) {
-					rd_wdata = mem.r32(*addr_p);
+					rd_wdata = r32(*addr_p);
 					if (!rd_wdata) {
 						exception_cause = XCAUSE_LOAD_FAULT;
 					}
@@ -564,7 +564,7 @@ void RVCore::step(MemBase32 &mem, bool trace) {
 			} else {
 				std::optional<ux_t> addr_p = vmap_ls(addr_v, PTE_W);
 				if (addr_p) {
-					if (!mem.w32(*addr_p, regs[c_rs2_s(instr)])) {
+					if (!w32(*addr_p, regs[c_rs2_s(instr)])) {
 						exception_cause = XCAUSE_STORE_FAULT;
 					}
 				} else {
@@ -677,7 +677,7 @@ void RVCore::step(MemBase32 &mem, bool trace) {
 			} else {
 				std::optional<ux_t> addr_p = vmap_ls(addr_v, PTE_R);
 				if (addr_p) {
-					rd_wdata = mem.r32(*addr_p);
+					rd_wdata = r32(*addr_p);
 					if (!rd_wdata) {
 						exception_cause = XCAUSE_LOAD_FAULT;
 					}
@@ -697,7 +697,7 @@ void RVCore::step(MemBase32 &mem, bool trace) {
 			} else {
 				std::optional<ux_t> addr_p = vmap_ls(addr_v, PTE_W);
 				if (addr_p) {
-					if (!mem.w32(*addr_p, regs[c_rs2_l(instr)])) {
+					if (!w32(*addr_p, regs[c_rs2_l(instr)])) {
 						exception_cause = XCAUSE_STORE_FAULT;
 					}
 				} else {

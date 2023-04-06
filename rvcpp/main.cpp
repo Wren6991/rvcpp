@@ -101,15 +101,17 @@ int main(int argc, char **argv) {
 		}
 	}
 
-	FlatMem32 ram(ramsize);
+	// Main RAM is handled inside of RVCore, but MMIO (and additional small
+	// memories like boot RAMs) go in the memmap.
 	TBMemIO io;
 	MemMap32 mem;
 	UART8250 uart;
 	MTimer mtimer;
-	mem.add(RAM_BASE, ramsize, &ram);
 	mem.add(TBIO_BASE, 12, &io);
 	mem.add(UART8250_BASE, 8, &uart);
 	mem.add(MTIMER_BASE, 16, &mtimer);
+
+	RVCore core(mem, RAM_BASE, RAM_BASE, ramsize);
 
 	if (load_bin) {
 		std::ifstream fd(bin_path, std::ios::binary | std::ios::ate);
@@ -119,16 +121,14 @@ int main(int argc, char **argv) {
 			return -1;
 		}
 		fd.seekg(0, std::ios::beg);
-		fd.read((char*)ram.mem, bin_size);
+		fd.read((char*)core.ram, bin_size);
 	}
-
-	RVCore core(mem, RAM_BASE);
 
 	int64_t cyc;
 	int rc = 0;
 	try {
 		for (cyc = 0; cyc < max_cycles; ++cyc) {
-			core.step(mem, trace_execution);
+			core.step(trace_execution);
 			if (!(cyc & 0xfff)) {
 				mtimer.step_time();
 				core.csr.set_irq_t(mtimer.irq_status(0));

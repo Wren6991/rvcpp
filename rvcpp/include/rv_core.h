@@ -16,10 +16,30 @@ struct RVCore {
 	bool load_reserved;
 	MemBase32 &mem;
 
-	RVCore(MemBase32 &_mem, ux_t reset_vector) : mem(_mem) {
+	// A single flat RAM is handled as a special case, in addition to whatever
+	// is in `mem`, because this avoids virtual calls for the majority of
+	// memory accesses. This RAM takes precedence over whatever is mapped at
+	// the same address in `mem`. (Note the size of this RAM may be zero, and
+	// RAM can also be added to the `mem` object.)
+	ux_t *ram;
+	ux_t ram_base;
+	ux_t ram_top;
+
+	RVCore(MemBase32 &_mem, ux_t reset_vector, ux_t ram_base_, ux_t ram_size_) : mem(_mem) {
 		std::fill(std::begin(regs), std::end(regs), 0);
 		pc = reset_vector;
 		load_reserved = false;
+		ram_base = ram_base_;
+		ram_top = ram_base_ + ram_size_;
+		ram = new ux_t[ram_size_ / sizeof(ux_t)];
+		assert(ram);
+		assert(!(ram_base_ & 0x3));
+		assert(!(ram_size_ & 0x3));
+		assert(ram_base_ + ram_size_ >= ram_base_);
+	}
+
+	~RVCore() {
+		delete ram;
 	}
 
 	enum {
@@ -37,7 +57,62 @@ struct RVCore {
 		OPC_SYSTEM   = 0b11'100
 	};
 
-	void step(MemBase32 &mem, bool trace=false);
+	// Fetch and execute one instruction from memory.
+	void step(bool trace=false);
+
+	// Functions to read/write memory from this hart's point of view
+	std::optional<uint8_t> r8(ux_t addr) {
+		if (addr >= ram_base && addr < ram_top) {
+			return ram[(addr - ram_base) >> 2] >> 8 * (addr & 0x3) & 0xffu;
+		} else {
+			return mem.r8(addr);
+		}
+	}
+
+	bool w8(ux_t addr, uint8_t data) {
+		if (addr >= ram_base && addr < ram_top) {
+			ram[(addr - ram_base) >> 2] &= ~(0xffu << 8 * (addr & 0x3));
+			ram[(addr - ram_base) >> 2] |= (uint32_t)data << 8 * (addr & 0x3);
+			return true;
+		} else {
+			return mem.w8(addr, data);
+		}
+	}
+
+	std::optional<uint16_t> r16(ux_t addr) {
+		if (addr >= ram_base && addr < ram_top) {
+			return ram[(addr - ram_base) >> 2] >> 8 * (addr & 0x2) & 0xffffu;
+		} else {
+			return mem.r16(addr);
+		}
+	}
+
+	bool w16(ux_t addr, uint16_t data) {
+		if (addr >= ram_base && addr < ram_top) {
+			ram[(addr - ram_base) >> 2] &= ~(0xffffu << 8 * (addr & 0x2));
+			ram[(addr - ram_base) >> 2] |= (uint32_t)data << 8 * (addr & 0x2);
+			return true;
+		} else {
+			return mem.w16(addr, data);
+		}
+	}
+
+	std::optional<uint32_t> r32(ux_t addr) {
+		if (addr >= ram_base && addr < ram_top) {
+			return ram[(addr - ram_base) >> 2];
+		} else {
+			return mem.r32(addr);
+		}
+	}
+
+	bool w32(ux_t addr, uint32_t data) {
+		if (addr >= ram_base && addr < ram_top) {
+			ram[(addr - ram_base) >> 2] = data;
+			return true;
+		} else {
+			return mem.w32(addr, data);
+		}
+	}
 
 private:
 
@@ -45,7 +120,7 @@ private:
 		assert(effective_priv <= PRV_S);
 		// First translation stage: vaddr bits 31:22
 		ux_t addr_of_pte1 = atp + ((vaddr >> 20) & 0xffcu);
-		std::optional<ux_t> pte1 = mem.r32(addr_of_pte1);
+		std::optional<ux_t> pte1 = r32(addr_of_pte1);
 		if (!(pte1 && *pte1 & PTE_V))
 			return {};
 		if (*pte1 & (PTE_X | PTE_W | PTE_R)) {
@@ -59,7 +134,7 @@ private:
 			// Looks good, so update A/D and return the mapped address
 			ux_t pte1_a_d_update = *pte1 | PTE_A | (required_permissions & PTE_W ? PTE_D : 0);
 			if (pte1_a_d_update != *pte1) {
-				if (!mem.w32(addr_of_pte1, pte1_a_d_update)) {
+				if (!w32(addr_of_pte1, pte1_a_d_update)) {
 					return {};
 				}
 			}
@@ -68,7 +143,7 @@ private:
 
 		// Second translation stage: vaddr bits 21:12
 		ux_t addr_of_pte0 = ((*pte1 << 2) & 0xfffff000u) | ((vaddr >> 10) & 0xffcu);
-		std::optional<ux_t> pte0 = mem.r32(addr_of_pte0);
+		std::optional<ux_t> pte0 = r32(addr_of_pte0);
 		// Must be a valid leaf PTE.
 		if (!(pte0 && (*pte0 & PTE_V) && (*pte0 & (PTE_X | PTE_W | PTE_R))))
 			return {};
@@ -78,7 +153,7 @@ private:
 		// PTE looks good, so update A/D bits before returning the mapped address
 		ux_t pte0_a_d_update = *pte0 | PTE_A | (required_permissions & PTE_W ? PTE_D : 0);
 		if (pte0_a_d_update != *pte0) {
-			if (!mem.w32(addr_of_pte0, pte0_a_d_update)) {
+			if (!w32(addr_of_pte0, pte0_a_d_update)) {
 				return {};
 			}
 		}
