@@ -16,7 +16,7 @@ run: $(APP).bin
 bin: $(APP).bin
 
 tb:
-	$(MAKE) -C $(SIM_DIR) tb
+	$(MAKE) -C $(SIM_DIR)
 
 clean:
 	rm -f $(APP).elf $(APP).bin $(APP).dis $(APP)_run.vcd
