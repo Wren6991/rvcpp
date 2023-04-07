@@ -122,7 +122,7 @@ int main(int argc, char **argv) {
 	RVCore core(mem, RAM_BASE, RAM_BASE, ram_size);
 
 	for (size_t i = 0; i < bin_paths.size(); ++i) {
-		if (trace_execution) {
+		if (trace_execution || trace_from_pc) {
 			printf("Loading file \"%s\" at %08x\n", bin_paths[i].c_str(), bin_addrs[i]);
 		}
 		std::ifstream fd(bin_paths[i], std::ios::binary | std::ios::ate);
@@ -135,7 +135,7 @@ int main(int argc, char **argv) {
 			return -1;
 		}
 		fd.seekg(0, std::ios::beg);
-		fd.read((char*)&core.ram[bin_addrs[i] - RAM_BASE], bin_size);
+		fd.read((char*)&core.ram[(bin_addrs[i] - RAM_BASE) >> 2], bin_size);
 	}
 
 	int64_t cyc;
@@ -167,7 +167,7 @@ int main(int argc, char **argv) {
 	for (auto [start, end] : dump_ranges) {
 		printf("Dumping memory from %08x to %08x:\n", start, end);
 		for (uint32_t i = 0; i < end - start; ++i)
-			printf("%02x%c", *mem.r8(start + i), i % 16 == 15 ? '\n' : ' ');
+			printf("%02x%c", *core.r8(start + i), i % 16 == 15 ? '\n' : ' ');
 		printf("\n");
 	}
 
