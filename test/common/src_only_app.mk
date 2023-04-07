@@ -22,7 +22,10 @@ run: $(TMP_PREFIX)$(APP).bin
 	$(SIM_EXEC) --bin $(TMP_PREFIX)$(APP).bin --vcd $(TMP_PREFIX)$(APP)_run.vcd --cycles $(MAX_CYCLES)
 
 trace:
-	$(SIM_EXEC) --bin $(TMP_PREFIX)$(APP).bin --trace --cycles $(MAX_CYCLES) | tee $(TMP_PREFIX)$(APP)_run.log
+	$(SIM_EXEC) --bin $(TMP_PREFIX)$(APP).bin --trace --cycles $(MAX_CYCLES) > $(TMP_PREFIX)$(APP)_run.log
+
+annotate: trace
+	$(SWTEST_SCRIPTS)/annotate_trace.py $(TMP_PREFIX)$(APP)_run.log $(TMP_PREFIX)$(APP)_run_annotated.log -d $(TMP_PREFIX)$(APP).dis
 
 view: run
 	gtkwave $(TMP_PREFIX)$(APP)_run.vcd

@@ -3,6 +3,7 @@
 SWTEST_ROOT         := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))
 
 SWTEST_COMMON       := $(SWTEST_ROOT)/common
+SWTEST_SCRIPTS      := $(SWTEST_ROOT)/scripts
 SIM_DIR             := $(SWTEST_ROOT)/../rvcpp
 SIM_EXEC            := $(SIM_DIR)/rvcpp
 
