@@ -49,8 +49,8 @@ class RVCSR {
 	// interrupt signals
 	ux_t get_effective_xip() {
 		return xip |
-			(irq_t ? MIP_MSIP | MIP_SSIP : 0) |
-			(irq_s ? MIP_MTIP | MIP_STIP : 0) |
+			(irq_s ? MIP_MSIP | MIP_SSIP : 0) |
+			(irq_t ? MIP_MTIP | MIP_STIP : 0) |
 			(irq_e ? MIP_MEIP | MIP_SEIP : 0);
 	}
 
