@@ -124,20 +124,20 @@ private:
 		ux_t addr_of_pte1 = atp + ((vaddr >> 20) & 0xffcu);
 		std::optional<ux_t> pte1 = r32(addr_of_pte1);
 		if (!(pte1 && *pte1 & PTE_V))
-			return {};
+			return std::nullopt;
 		if (*pte1 & (PTE_X | PTE_W | PTE_R)) {
 			// It's a leaf PTE. Permission check before touching A/D bits:
 			if (!csr.pte_permissions_ok(*pte1, required_permissions))
-				return {};
+				return std::nullopt;
 			// First-level leaf PTEs must have lower PPN bits cleared, so that
 			// they cover a 4 MiB-aligned range.
 			if (*pte1 & 0x000ffc00u)
-				return {};
+				return std::nullopt;
 			// Looks good, so update A/D and return the mapped address
 			ux_t pte1_a_d_update = *pte1 | PTE_A | (required_permissions & PTE_W ? PTE_D : 0);
 			if (pte1_a_d_update != *pte1) {
 				if (!w32(addr_of_pte1, pte1_a_d_update)) {
-					return {};
+					return std::nullopt;
 				}
 			}
 			return ((*pte1 << 2) & 0xffc00000u) | (vaddr & 0x003fffffu);
@@ -148,15 +148,15 @@ private:
 		std::optional<ux_t> pte0 = r32(addr_of_pte0);
 		// Must be a valid leaf PTE.
 		if (!(pte0 && (*pte0 & PTE_V) && (*pte0 & (PTE_X | PTE_W | PTE_R))))
-			return {};
+			return std::nullopt;
 		// Permission check
 		if (!csr.pte_permissions_ok(*pte0, required_permissions))
-			return {};
+			return std::nullopt;
 		// PTE looks good, so update A/D bits before returning the mapped address
 		ux_t pte0_a_d_update = *pte0 | PTE_A | (required_permissions & PTE_W ? PTE_D : 0);
 		if (pte0_a_d_update != *pte0) {
 			if (!w32(addr_of_pte0, pte0_a_d_update)) {
-				return {};
+				return std::nullopt;
 			}
 		}
 		return ((*pte0 << 2) & 0xfffff000u) | (vaddr & 0xfffu);

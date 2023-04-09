@@ -478,7 +478,7 @@ void RVCore::step(bool trace) {
 				}
 				// Suppress GPR writeback of earlier read due to write exception
 				if (exception_cause) {
-					rd_wdata = {};
+					rd_wdata = std::nullopt;
 				}
 			} else if (RVOPC_MATCH(instr, MRET)) {
 				if (csr.get_true_priv() == PRV_M) {

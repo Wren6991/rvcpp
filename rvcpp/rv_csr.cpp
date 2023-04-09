@@ -48,7 +48,7 @@ static const ux_t MIE_W_MASK = ALL_MIP_BITS;
 std::optional<ux_t> RVCSR::read(uint16_t addr, __attribute__((unused)) bool side_effect) {
 	// Minimum privilege check
 	if (addr >= 1u << 12 || GETBITS(addr, 9, 8) > priv)
-		return {};
+		return std::nullopt;
 	// Additional privilege checks
 	bool permit_cycle =
 		(priv >= PRV_M || mcounteren & 0x1) &&
@@ -95,15 +95,15 @@ std::optional<ux_t> RVCSR::read(uint16_t addr, __attribute__((unused)) bool side
 		case CSR_SEPC:       return sepc;
 		case CSR_SCAUSE:     return scause;
 		case CSR_STVAL:      return stval;
-		case CSR_SATP:       if (permit_satp)        return satp;       else return {};
+		case CSR_SATP:       if (permit_satp)        return satp;       else return std::nullopt;
 
 		// Unprivileged
-		case CSR_CYCLE:      if (permit_cycle)       return mcycle;     else return {};
-		case CSR_CYCLEH:     if (permit_cycle)       return mcycleh;    else return {};
-		case CSR_INSTRET:    if (permit_instret)     return minstreth;  else return {};
-		case CSR_INSTRETH:   if (permit_instret)     return minstreth;  else return {};
+		case CSR_CYCLE:      if (permit_cycle)       return mcycle;     else return std::nullopt;
+		case CSR_CYCLEH:     if (permit_cycle)       return mcycleh;    else return std::nullopt;
+		case CSR_INSTRET:    if (permit_instret)     return minstreth;  else return std::nullopt;
+		case CSR_INSTRETH:   if (permit_instret)     return minstreth;  else return std::nullopt;
 
-		default:             return {};
+		default:             return std::nullopt;
 	}
 }
 
@@ -189,7 +189,7 @@ std::optional<ux_t> RVCSR::trap_check_enter_irq(ux_t xepc) {
 		ux_t cause = (1u << 31) | __builtin_ctz(s_targeted_irqs);
 		return trap_enter_at_priv(cause, xepc, PRV_S);
 	} else {
-		return {};
+		return std::nullopt;
 	}
 }
 
