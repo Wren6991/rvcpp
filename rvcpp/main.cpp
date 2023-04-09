@@ -33,7 +33,11 @@ const char *help_str =
 "    --cycles n       : Maximum number of cycles to run before exiting.\n"
 "    --memsize n      : Memory size in units of 1024 bytes, default is 256 MB\n"
 "    --trace          : Print out execution tracing info\n"
-"    --trace-from pc  : Enable tracing upon reaching address pc\n"
+"    --ton-pc pc      : Enable tracing upon reaching address pc\n"
+"                       (can be passed multiple times\n"
+"    --toff-pc pc     : Disable tracing upon reaching address pc\n"
+"                       (can be passed multiple times\n"
+"    --ton-pc         : Enable tracing upon reaching address pc\n"
 "    --cpuret         : Testbench's return code is the return code written to\n"
 "                       IO_EXIT by the CPU, or -1 if timed out.\n";
 
@@ -53,8 +57,10 @@ int main(int argc, char **argv) {
 	std::vector<std::string> bin_paths;
 	std::vector<ux_t> bin_addrs;
 	bool trace_execution = false;
-	bool trace_from_pc = false;
-	ux_t trace_from_pc_val = 0;
+	bool trace_on_pc = false;
+	std::vector<ux_t> trace_on_pc_val;
+	bool trace_off_pc = false;
+	std::vector<ux_t> trace_off_pc_val;
 	bool propagate_return_code = false;
 
 	for (int i = 1; i < argc; ++i) {
@@ -95,11 +101,17 @@ int main(int argc, char **argv) {
 			i += 1;
 		} else if (s == "--trace") {
 			trace_execution = true;
-		} else if (s == "--trace-from") {
-			trace_from_pc = true;
+		} else if (s == "--ton-pc") {
+			trace_on_pc = true;
 			if (argc - i < 2)
-				exit_help("Option --trace-from requires an argument\n");
-			trace_from_pc_val = std::stol(argv[i + 1], 0, 0);
+				exit_help("Option --ton-pc requires an argument\n");
+			trace_on_pc_val.push_back(std::stol(argv[i + 1], 0, 0));
+			i += 1;
+		} else if (s == "--toff-pc") {
+			trace_off_pc = true;
+			if (argc - i < 2)
+				exit_help("Option --toff-pc requires an argument\n");
+			trace_off_pc_val.push_back(std::stol(argv[i + 1], 0, 0));
 			i += 1;
 		} else if (s == "--cpuret") {
 			propagate_return_code = true;
@@ -122,7 +134,7 @@ int main(int argc, char **argv) {
 	RVCore core(mem, RAM_BASE, RAM_BASE, ram_size);
 
 	for (size_t i = 0; i < bin_paths.size(); ++i) {
-		if (trace_execution || trace_from_pc) {
+		if (trace_execution || trace_on_pc) {
 			printf("Loading file \"%s\" at %08x\n", bin_paths[i].c_str(), bin_addrs[i]);
 		}
 		std::ifstream fd(bin_paths[i], std::ios::binary | std::ios::ate);
@@ -147,8 +159,21 @@ int main(int argc, char **argv) {
 				mtimer.step_time();
 				core.csr.set_irq_t(mtimer.irq_status(0));
 			}
-			if (!trace_execution && trace_from_pc && core.pc == trace_from_pc_val) {
-				trace_execution = true;
+			if (!trace_execution && trace_on_pc) {
+				for (ux_t addr : trace_on_pc_val) {
+					if (addr == core.pc) {
+						printf("(Trace enabled at PC %08x)\n", addr);
+						trace_execution = true;
+					}
+				}
+			}
+			if (trace_execution && trace_off_pc) {
+				for (ux_t addr : trace_off_pc_val) {
+					if (addr == core.pc) {
+						printf("(Trace disabled at PC %08x)\n", addr);
+						trace_execution = false;
+					}
+				}
 			}
 		}
 		if (cyc == max_cycles) {
