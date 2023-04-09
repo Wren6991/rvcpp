@@ -750,7 +750,7 @@ void RVCore::step(bool trace) {
 			trace_priv = csr.get_true_priv();
 		}
 	} else {
-		std::optional<ux_t> irq_target_pc = csr.trap_check_enter_irq(pc_wdata ? *pc_wdata : pc);
+		std::optional<ux_t> irq_target_pc = csr.trap_check_enter_irq(pc_wdata ? *pc_wdata : pc + ((instr & 0x3) == 0x3 ? 4 : 2));
 		if (irq_target_pc) {
 			pc_wdata = irq_target_pc;
 			if (trace) {
