@@ -36,19 +36,60 @@
 #define UART_LSR_DR             0x01  // Receiver data ready
 #define UART_LSR_BRK_ERROR_BITS 0x1E  // BI, FE, PE, OE bits
 
+#define UART_LCR_DLAB           0x80  // Bank select for addrs 0, 1
 
 struct UART8250: MemBase32 {
 
+	uint8_t dll;
+	uint8_t ier;
+	uint8_t dlm;
+	uint8_t iir;
+	uint8_t lcr;
+	uint8_t mcr;
+	uint8_t scr;
+
 	virtual bool w8(ux_t addr, uint8_t data) {
-		if (addr == UART_THR_OFFSET) {
+		if (addr == UART_THR_OFFSET && !(lcr & UART_LCR_DLAB)) {
 			putchar((char)data);
+		} else if (addr == UART_DLL_OFFSET && (lcr & UART_LCR_DLAB)) {
+			dll = data;
+		} else if (addr == UART_IER_OFFSET && !(lcr & UART_LCR_DLAB)) {
+			ier = data & 0xf;
+		} else if (addr == UART_DLM_OFFSET && (lcr & UART_LCR_DLAB)) {
+			dlm = data;
+		} else if (addr == UART_LCR_OFFSET) {
+			lcr = data;
+		} else if (addr == UART_MCR_OFFSET) {
+			mcr = data;
+		} else if (data == UART_SCR_OFFSET) {
+			scr = data;
+		} else if (addr > UART_SCR_OFFSET) {
+			return false;
 		}
 		return true;
 	}
 
 	virtual std::optional<uint8_t> r8(ux_t addr) {
-		if (addr == UART_LSR_OFFSET) {
+		if (addr == UART_RBR_OFFSET && !(lcr & UART_LCR_DLAB)) {
+			return 0;
+		} else if (addr == UART_DLL_OFFSET && (lcr & UART_LCR_DLAB)) {
+			return dll;
+		} else if (addr == UART_IER_OFFSET && !(lcr & UART_LCR_DLAB)) {
+			return ier;
+		} else if (addr == UART_DLM_OFFSET && (lcr & UART_LCR_DLAB)) {
+			return dlm;
+		} else if (addr == UART_IIR_OFFSET) {
+			// TODO IRQs
+			return 0; 
+		} else if (addr == UART_LCR_OFFSET) {
+			return lcr;
+		} else if (addr == UART_MCR_OFFSET) {
+			return mcr;
+		} else if (addr == UART_LSR_OFFSET) {
+			// We are always ready to accept new data.
 			return UART_LSR_TEMT | UART_LSR_THRE;
+		} else if (addr == UART_SCR_OFFSET) {
+			return scr;
 		} else {
 			return 0;
 		}
